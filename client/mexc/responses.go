@@ -186,44 +186,44 @@ type wsAccountOrdersMessage struct {
 	Endpoint  string         `json:"c"`
 	Symbol    string         `json:"s"`
 	Timestamp int64          `json:"t"`
-	OrderData wsAccountOrder `json:"d"`
+	Data      wsAccountOrder `json:"d"`
 }
 
 func (m *wsAccountOrdersMessage) toOrderUpdate() (*client.OrderUpdate, error) {
-	price, err := strconv.ParseFloat(m.OrderData.Price, 64)
+	price, err := strconv.ParseFloat(m.Data.Price, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	remainQuantity, err := strconv.ParseFloat(m.OrderData.RemainQuantity, 64)
+	remainQuantity, err := strconv.ParseFloat(m.Data.RemainQuantity, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	remainAmount, err := strconv.ParseFloat(m.OrderData.RemainAmount, 64)
+	remainAmount, err := strconv.ParseFloat(m.Data.RemainAmount, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	amount, err := strconv.ParseFloat(m.OrderData.Amount, 64)
+	amount, err := strconv.ParseFloat(m.Data.Amount, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	cumulativeQuantity, err := strconv.ParseFloat(m.OrderData.CumulativeQuantity, 64)
+	cumulativeQuantity, err := strconv.ParseFloat(m.Data.CumulativeQuantity, 64)
 	if err != nil {
 		return nil, err
 	}
 
-	cumulativeAmount, err := strconv.ParseFloat(m.OrderData.CumulativeAmount, 64)
+	cumulativeAmount, err := strconv.ParseFloat(m.Data.CumulativeAmount, 64)
 	if err != nil {
 		return nil, err
 	}
 
 	return &client.OrderUpdate{
 		Symbol:             m.Symbol,
-		OrderId:            m.OrderData.OrderId,
-		Status:             m.OrderData.Status,
+		Id:                 m.Data.OrderId,
+		Status:             m.Data.Status,
 		Price:              price,
 		CumulativeQuantity: cumulativeQuantity,
 		CumulativeAmount:   cumulativeAmount,
@@ -231,6 +231,62 @@ func (m *wsAccountOrdersMessage) toOrderUpdate() (*client.OrderUpdate, error) {
 		RemainQuantity:     remainQuantity,
 		Amount:             amount,
 		Timestamp:          time.UnixMilli(m.Timestamp),
-		TradeType:          m.OrderData.TradeType,
+		TradeType:          m.Data.TradeType,
+	}, nil
+}
+
+// WS PARTIAL BOOK DEPTH STREAM
+type wsPartialDepth struct {
+	Price    string `json:"p"`
+	Quantity string `json:"v"`
+}
+
+type wsPartialDepthMessageData struct {
+	Asks []wsPartialDepth `json:"asks"`
+	Bids []wsPartialDepth `json:"bids"`
+}
+
+type wsPartialDepthMessage struct {
+	Endpoint  string                    `json:"c"`
+	Symbol    string                    `json:"s"`
+	Timestamp int64                     `json:"t"`
+	Data      wsPartialDepthMessageData `json:"d"`
+}
+
+func (m *wsPartialDepthMessage) toPartialDepth() (*client.PartialDepth, error) {
+	asks := make([]client.PartialDepthPair, 0, len(m.Data.Asks))
+	bids := make([]client.PartialDepthPair, 0, len(m.Data.Bids))
+
+	for _, ask := range m.Data.Asks {
+		price, err := strconv.ParseFloat(ask.Price, 64)
+		if err != nil {
+			return nil, err
+		}
+		quantity, err := strconv.ParseFloat(ask.Quantity, 64)
+		if err != nil {
+			return nil, err
+		}
+		asks = append(asks, client.PartialDepthPair{Price: price, Quantity: quantity})
+	}
+
+	for _, bid := range m.Data.Bids {
+		price, err := strconv.ParseFloat(bid.Price, 64)
+		if err != nil {
+			return nil, err
+		}
+		quantity, err := strconv.ParseFloat(bid.Quantity, 64)
+		if err != nil {
+			return nil, err
+		}
+		bids = append(bids, client.PartialDepthPair{Price: price, Quantity: quantity})
+	}
+
+	timestamp := time.UnixMilli(m.Timestamp)
+
+	return &client.PartialDepth{
+		Symbol:    m.Symbol,
+		Asks:      asks,
+		Bids:      bids,
+		Timestamp: timestamp,
 	}, nil
 }

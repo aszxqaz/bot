@@ -1,69 +1,29 @@
 package robot
 
 import (
+	"log/slog"
 	"mexc-bot/client"
 	"mexc-bot/client/mexc"
-	"sync"
 )
 
-type BalancesMap = map[string]client.Balance
-type TickersMap = map[string]client.OrderBookTicker
-type OrdersMap = map[string]client.OrderUpdate
-
-type RobotContext struct {
-	balances BalancesMap
-	tickers  TickersMap
-	orders   OrdersMap
-}
-
 type Robot struct {
-	m              *mexc.MexcClient
-	balances       BalancesMap
-	balancesMu     sync.RWMutex
-	BalancesStream chan BalancesMap
-
-	tickers       TickersMap
-	TickersMu     sync.RWMutex
-	TickersStream chan TickersMap
-
-	Orders       OrdersMap
-	OrdersMu     sync.RWMutex
-	OrdersStream chan OrdersMap
-
-	DealsStream chan *client.Deal
-	// ContextStream chan RobotContext
+	m            *mexc.MexcClient
+	Balances     *MuMap[client.Balance]
+	Tickers      *MuMap[client.OrderBookTicker]
+	Orders       *MuMap[client.OrderUpdate]
+	Deals        *MuMap[client.Deal]
+	PartialDepth *MuMap[client.PartialDepth]
 }
 
 func NewRobot(m *mexc.MexcClient) *Robot {
 	return &Robot{
-		m:              m,
-		balances:       make(BalancesMap),
-		tickers:        make(TickersMap),
-		BalancesStream: make(chan BalancesMap, 1024),
-		TickersStream:  make(chan TickersMap, 1024),
-		OrdersStream:   make(chan OrdersMap, 1024),
-		DealsStream:    make(chan *client.Deal, 1024),
-		Orders:         make(OrdersMap),
-		// ContextStream: make(chan RobotContext),
+		m:            m,
+		Balances:     NewMuMap[client.Balance](),
+		Tickers:      NewMuMap[client.OrderBookTicker](),
+		Orders:       NewMuMap[client.OrderUpdate](),
+		Deals:        NewMuMap[client.Deal](),
+		PartialDepth: NewMuMap[client.PartialDepth](),
 	}
-}
-
-// type CycleOptions struct {
-// 	isSell        bool
-// 	usdcBalance   float64
-// 	stethQuantity float64
-// }
-
-func (r *Robot) WithTickers(do func(tickers TickersMap) any) any {
-	r.TickersMu.RLock()
-	defer r.TickersMu.RUnlock()
-	return do(r.tickers)
-}
-
-func (r *Robot) WithBalance(do func(balance BalancesMap) any) any {
-	r.balancesMu.RLock()
-	defer r.balancesMu.RUnlock()
-	return do(r.balances)
 }
 
 func (r *Robot) Init() error {
@@ -72,13 +32,22 @@ func (r *Robot) Init() error {
 	r.startListenTickers()
 	r.startListenOrderUpdates()
 	r.startListenDeals()
+	r.startPartialDepthUpdates()
 	return nil
 }
 
 func (r *Robot) startListenDeals() {
 	go func() {
 		for deal := range r.m.DealStream {
-			r.DealsStream <- deal
+			r.Deals.Set(deal.TradeId, *deal)
+		}
+	}()
+}
+
+func (r *Robot) startPartialDepthUpdates() {
+	go func() {
+		for depth := range r.m.PartialDepthStream {
+			r.PartialDepth.Set(depth.Symbol, *depth)
 		}
 	}()
 }
@@ -86,32 +55,27 @@ func (r *Robot) startListenDeals() {
 func (r *Robot) startListenOrderUpdates() {
 	go func() {
 		for order := range r.m.OrderUpdateStream {
-			r.OrdersMu.Lock()
 			if order.RemainQuantity == 0 {
-				delete(r.Orders, order.OrderId)
+				r.Orders.Delete(order.Id)
 			} else {
-				r.Orders[order.OrderId] = *order
+				r.Orders.Set(order.Id, *order)
 			}
-
-			r.OrdersMu.Unlock()
-			r.OrdersStream <- r.Orders
 		}
 	}()
 }
 
 func (r *Robot) startListenAccountUpdates() error {
 	balances, err := r.m.Balances()
+	slog.Info("[ROBOT] prefetched balances", "balances", balances)
 	if err != nil {
 		return err
 	}
-	r.balances = balances
-	r.BalancesStream <- balances
+	for asset, balance := range balances {
+		r.Balances.Set(asset, balance)
+	}
 	go func() {
-		for update := range r.m.BalanceStream {
-			r.balancesMu.Lock()
-			r.balances[update.Asset] = *update
-			r.balancesMu.Unlock()
-			r.BalancesStream <- r.balances
+		for balance := range r.m.BalanceStream {
+			r.Balances.Set(balance.Asset, *balance)
 		}
 	}()
 	return nil
@@ -127,15 +91,12 @@ func (r *Robot) startListenTickers() {
 		panic("couldn't get order book ticker")
 	}
 
-	r.tickers[client.ETHUSDC] = *ethusdc
-	r.tickers[client.STETHUSDC] = *stethusdc
+	r.Tickers.Set(client.ETHUSDC, *ethusdc)
+	r.Tickers.Set(client.STETHUSDC, *stethusdc)
 
 	go func() {
 		for ticker := range r.m.TickersStream {
-			r.TickersMu.Lock()
-			r.tickers[ticker.Symbol] = *ticker
-			r.TickersMu.Unlock()
-			r.TickersStream <- r.tickers
+			r.Tickers.Set(ticker.Symbol, *ticker)
 		}
 	}()
 }

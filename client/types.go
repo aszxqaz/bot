@@ -79,9 +79,21 @@ type OrderUpdate struct {
 	TradeType          int
 	RemainQuantity     float64
 	Amount             float64
-	OrderId            string
+	Id                 string
 	Price              float64
 	CumulativeQuantity float64
 	CumulativeAmount   float64
 	Status             int
+}
+
+type PartialDepthPair struct {
+	Price    float64
+	Quantity float64
+}
+
+type PartialDepth struct {
+	Symbol    string
+	Timestamp time.Time
+	Asks      []PartialDepthPair
+	Bids      []PartialDepthPair
 }

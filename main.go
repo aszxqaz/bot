@@ -2,12 +2,14 @@ package main
 
 import (
 	"log/slog"
-	"math"
 	"mexc-bot/client"
 	"mexc-bot/client/mexc"
 	"mexc-bot/robot"
 	"os"
+	"sync"
 )
+
+const PRICE_OFFSET = 5
 
 func main() {
 	slog.SetLogLoggerLevel(slog.LevelInfo)
@@ -22,156 +24,195 @@ func main() {
 	}
 
 	mexcClient := mexc.NewMexcClient(apiKey, secretKey)
-	rob := robot.NewRobot(mexcClient)
-	rob.Init()
+	store := robot.NewRobot(mexcClient)
+	store.Init()
 
-	// go func() {
-	// 	for deal := range rob.DealsStream {
-	// 		slog.Info("[ROBOT] DEAL UPDATE", "deal", deal)
-	// 	}
-	// }()
-
-	go func() {
-		for balance := range rob.BalancesStream {
-			slog.Info("[ROBOT] BALANCE UPDATE", "balance", balance)
-			for tickers := range rob.TickersStream {
-				rob.OrdersMu.Lock()
-				orders := rob.Orders
-				ordersId := []string{}
-				for id, order := range orders {
-					if order.TradeType == client.TradeTypeSell && order.Symbol == client.STETHUSDC && order.Status == client.OrderStatusNew {
-						ordersId = append(ordersId, id)
-					}
-				}
-				rob.OrdersMu.Unlock()
-				if len(ordersId) == 0 {
-					if balance["STETH"].Free >= 0.0011 {
-						go func() {
-							rob.TickersMu.RLock()
-							ethAskPrice := tickers[client.ETHUSDC].AskPrice
-							stethAskPrice := tickers[client.STETHUSDC].AskPrice
-							rob.TickersMu.RUnlock()
-							if ethAskPrice > 0 && stethAskPrice > 0 {
-								price := math.Max(ethAskPrice+20, stethAskPrice-0.01)
-								order := &client.Order{
-									Symbol:  client.STETHUSDC,
-									Price:   price,
-									Type:    client.LimitOrderType,
-									Side:    client.SellOrderSide,
-									OrigQty: balance["STETH"].Free,
-								}
-								slog.Info("[ROBOT] PREPARED ORDER: ", "eth ask price", ethAskPrice, "steth ask price", stethAskPrice, "order", order)
-								mexcClient.PlaceOrder(order)
-							}
-						}()
-					}
-				} else {
-					for _, id := range ordersId {
-						go func(orderId string) {
-							err := mexcClient.CancelOrder(client.STETHUSDC, orderId)
-							if err != nil {
-								rob.OrdersMu.Lock()
-								delete(rob.Orders, orderId)
-								rob.OrdersMu.Unlock()
-							}
-						}(id)
-					}
-				}
-			}
-
-			// if balance["USDC"].Free >= 5 {
-			// 	go func() {
-			// 		for tickers := range rob.TickersStream {
-			// 			rob.TickersMu.RLock()
-			// 			ethBidPrice := tickers[client.ETHUSDC].BidPrice
-			// 			stethBidPrice := tickers[client.STETHUSDC].BidPrice
-			// 			rob.TickersMu.RUnlock()
-			// 			if ethBidPrice > 0 && stethBidPrice > 0 {
-			// 				price := math.Min(ethBidPrice-20, stethBidPrice+0.01)
-			// 				quantity := balance["USDC"].Free / price
-			// 				order := &client.Order{
-			// 					Symbol:  client.STETHUSDC,
-			// 					Price:   price,
-			// 					Type:    client.LimitOrderType,
-			// 					Side:    client.BuyOrderSide,
-			// 					OrigQty: quantity,
-			// 				}
-			// 				slog.Info("[ROBOT] PREPARED ORDER: ", "eth bid price", ethBidPrice, "steth bid price", stethBidPrice, "order", order)
-			// 				mexcClient.PlaceOrder(order)
-			// 				break
-			// 			}
-			// 		}
-			// 	}()
-			// }
-		}
-	}()
-
-	// go func() {
-	// 	for orders := range rob.OrdersStream {
-	// 		slog.Info("[ROBOT] ORDERS UPDATE", "orders", orders)
-	// 	}
-	// }()
-
-	// go func() {
-	// 	for r := range mexcClient.TickersStream {
-	// 		log.Printf("[ROBOT] TICKER UPDATE: %+v\n", r)
-	// 	}
-	// }()
-
-	// time.Sleep(time.Second * 3)
-
-	// order := &client.Order{
-	// 	Symbol:  "BTCUSDC",
-	// 	Type:    client.LimitOrderType,
-	// 	Side:    client.SellOrderSide,
-	// 	OrigQty: 0.00011,
-	// 	Price:   58000,
-	// }
-	// mexcClient.PlaceOrder(order)
-	// time.Sleep(time.Second * 2)
-	// order = &client.Order{
-	// 	Symbol:  "BTCUSDC",
-	// 	Type:    client.LimitOrderType,
-	// 	Side:    client.BuyOrderSide,
-	// 	OrigQty: 0.00011,
-	// 	Price:   100000,
-	// }
-	// mexcClient.PlaceOrder(order)
-
-	// RunTrading(mexcClient)
+	go SellLoop(store, mexcClient)
+	go BuyLoop(store, mexcClient)
 	select {}
+
+	// for {
+	// 	depth, ok := store.PartialDepth.Get(client.STETHUSDC)
+	// 	if !ok {
+	// 		slog.Info("OK FALSE")
+	// 	} else {
+	// 		slog.Info("depth", "depth", depth)
+	// 	}
+	// }
 }
 
-// func RunTrading(mexcClient *mexc.MexcClient) {
-// 	balances, err := mexcClient.Balances()
-// 	if err != nil {
-// 		log.Fatalln("[ROBOT] FAILED TO FETCH BALANCES. ", err)
-// 	}
-// 	log.Printf("[ROBOT] BALANCES: %+v\n", balances)
+func SellLoop(store *robot.Robot, mexcClient *mexc.MexcClient) {
+	lastPrice := 0.0
+	for {
+		depth, ok := store.PartialDepth.Get(client.STETHUSDC)
+		if !ok {
+			continue
+		}
+		ethTicker, ok := store.Tickers.Get(client.ETHUSDC)
+		if !ok || ethTicker.AskPrice == 0 {
+			continue
+		}
+		// stethTicker, ok := store.Tickers.Get(client.STETHUSDC)
+		// if !ok || stethTicker.AskPrice == 0 {
+		// 	continue
+		// }
+		price := getAskPrice(ethTicker.AskPrice, 0, depth.Asks)
+		if price == lastPrice {
+			continue
+		}
+		cancelableOrderIds := []string{}
+		store.Orders.Range(func(key string, order client.OrderUpdate) bool {
+			if order.Status == client.OrderStatusNew &&
+				order.TradeType == client.TradeTypeSell &&
+				order.Symbol == client.STETHUSDC {
+				cancelableOrderIds = append(cancelableOrderIds, order.Id)
+			}
+			return true
+		})
+		var wg sync.WaitGroup
+		for _, id := range cancelableOrderIds {
+			wg.Add(1)
+			go func(id string) {
+				err := mexcClient.CancelOrder(client.STETHUSDC, id)
+				if err == nil {
+					store.Orders.Delete(id)
+					lastPrice = 0
+				}
+				wg.Done()
+			}(id)
+		}
+		wg.Wait()
+		balance, ok := store.Balances.Get("STETH")
+		if !ok {
+			continue
+		}
+		if balance.Free >= 0.0011 {
+			depth, _ := store.PartialDepth.Get(client.STETHUSDC)
+			ethTicker, _ := store.Tickers.Get(client.ETHUSDC)
+			// stethTicker, ok := store.Tickers.Get(client.STETHUSDC)
+			// if !ok || stethTicker.AskPrice == 0 {
+			// 	continue
+			// }
+			price := getAskPrice(ethTicker.AskPrice, 0, depth.Asks)
+			order := &client.Order{Type: client.LimitOrderType, Side: client.SellOrderSide, Symbol: client.STETHUSDC, Price: price, OrigQty: balance.Free}
+			err := mexcClient.PlaceOrder(order)
+			if err == nil {
+				slog.Info("[ROBOT] Order placed", "order", order, "asks", depth.Asks, "ethAskPrice", ethTicker.AskPrice)
+				store.Orders.Set(order.Id, client.OrderUpdate{
+					Id:             order.Id,
+					Symbol:         order.Symbol,
+					Price:          order.Price,
+					Status:         client.OrderStatusNew,
+					RemainQuantity: order.OrigQty,
+					TradeType:      client.TradeTypeSell,
+				})
+				store.Balances.Set("STETH", client.Balance{Asset: "STETH", Free: 0})
+				lastPrice = price
+			} else {
+				lastPrice = 0
+			}
+		}
+	}
+}
 
-// 	if balances["ETH"].Free < BASE_QUANTITY && balances["STETH"].Free < BASE_QUANTITY {
-// 		log.Fatalln("[ROBOT] NO ENOUGH ETH AND/OR STETH BALANCE. ABORTING...")
-// 	}
+func BuyLoop(store *robot.Robot, mexcClient *mexc.MexcClient) {
+	lastPrice := 0.0
+	for {
+		depth, ok := store.PartialDepth.Get(client.STETHUSDC)
+		if !ok {
+			continue
+		}
+		ethTicker, ok := store.Tickers.Get(client.ETHUSDC)
+		if !ok || ethTicker.BidPrice == 0 {
+			continue
+		}
+		// stethTicker, ok := store.Tickers.Get(client.STETHUSDC)
+		// if !ok || stethTicker.BidPrice == 0 {
+		// 	continue
+		// }
+		price := getBidPrice(ethTicker.BidPrice, 0, depth.Bids)
+		if price == lastPrice {
+			continue
+		}
+		cancelableOrderIds := []string{}
+		store.Orders.Range(func(key string, order client.OrderUpdate) bool {
+			if order.Status == client.OrderStatusNew &&
+				order.TradeType == client.TradeTypeBuy &&
+				order.Symbol == client.STETHUSDC {
+				cancelableOrderIds = append(cancelableOrderIds, order.Id)
+			}
+			return true
+		})
+		var wg sync.WaitGroup
+		for _, id := range cancelableOrderIds {
+			wg.Add(1)
+			go func(id string) {
+				err := mexcClient.CancelOrder(client.STETHUSDC, id)
+				if err == nil {
+					store.Orders.Delete(id)
+					lastPrice = 0
+				}
+				wg.Done()
+			}(id)
+		}
+		wg.Wait()
+		balance, ok := store.Balances.Get("USDC")
+		if !ok {
+			continue
+		}
+		if balance.Free >= 5 {
+			depth, _ := store.PartialDepth.Get(client.STETHUSDC)
+			ethTicker, _ := store.Tickers.Get(client.ETHUSDC)
+			// stethTicker, ok := store.Tickers.Get(client.STETHUSDC)
+			// if !ok || stethTicker.AskPrice == 0 {
+			// 	continue
+			// }
+			price := getBidPrice(ethTicker.BidPrice, 0, depth.Bids)
+			order := &client.Order{
+				Type:    client.LimitOrderType,
+				Side:    client.BuyOrderSide,
+				Symbol:  client.STETHUSDC,
+				Price:   price,
+				OrigQty: balance.Free / price,
+			}
+			err := mexcClient.PlaceOrder(order)
+			if err == nil {
+				slog.Info("[ROBOT] Order placed", "order", order, "bids", depth.Bids, "ethBidPrice", ethTicker.BidPrice)
+				store.Orders.Set(order.Id, client.OrderUpdate{
+					Id:             order.Id,
+					Symbol:         order.Symbol,
+					Price:          order.Price,
+					Status:         client.OrderStatusNew,
+					RemainQuantity: order.OrigQty,
+					TradeType:      client.TradeTypeBuy,
+				})
+				store.Balances.Set("USDC", client.Balance{Asset: "USDC", Free: 0})
+				lastPrice = price
+			} else {
+				lastPrice = 0
+			}
+		}
+	}
+}
 
-// 	getSymbolPrice := func(o *client.OrderBookTicker, isSell bool) float64 {
-// 		if isSell {
-// 			return o.AskPrice
-// 		} else {
-// 			return o.BidPrice
-// 		}
-// 	}
+func getAskPrice(ethPrice float64, stethPrice float64, asks []client.PartialDepthPair) float64 {
+	base := ethPrice + PRICE_OFFSET
+	for _, a := range asks {
+		if a.Price >= base {
+			return a.Price - 0.1
+		}
+	}
+	return base
+	// return math.Max(ethPrice+PRICE_OFFSET, stethPrice-0.01)
+}
 
-// 	isSell := true
-// 	if balances["STETH"].Free >= BASE_QUANTITY {
-// 		log.Printf("[ROBOT] STETH BALANCE (%f) > BASE_QUANTITY (%f). FETCHING TICKERS...", balances["STETH"].Free, BASE_QUANTITY)
-// 		isSell = false
-// 	} else {
-// 		log.Printf("[ROBOT] ETH BALANCE (%f) > BASE_QUANTITY (%f). FETCHING TICKERS...", balances["ETH"].Free, BASE_QUANTITY)
-// 	}
-
-// }
-
-func getPrice(ethPrice float64, stethPrice float64) float64 {
-	return ethPrice + 20
-	// return math.Max(ethTicker.AskPrice+20.0, stethTicker.AskPrice-0.01)
+func getBidPrice(ethPrice float64, stethPrice float64, bids []client.PartialDepthPair) float64 {
+	base := ethPrice - PRICE_OFFSET
+	for _, d := range bids {
+		if d.Price <= base {
+			return d.Price + 0.1
+		}
+	}
+	return base
+	// return math.Min(ethPrice-PRICE_OFFSET, stethPrice+0.01)
 }

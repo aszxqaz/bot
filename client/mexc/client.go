@@ -23,15 +23,16 @@ const (
 )
 
 type MexcClient struct {
-	wsConn            *websocket.Conn
-	apiKey            string
-	httpClient        *httpclient.HttpClient
-	lkm               *listenKeyManager
-	qm                *queryMaker
-	DealStream        chan *client.Deal
-	BalanceStream     chan *client.Balance
-	TickersStream     chan *client.OrderBookTicker
-	OrderUpdateStream chan *client.OrderUpdate
+	wsConn             *websocket.Conn
+	apiKey             string
+	httpClient         *httpclient.HttpClient
+	lkm                *listenKeyManager
+	qm                 *queryMaker
+	DealStream         chan *client.Deal
+	BalanceStream      chan *client.Balance
+	TickersStream      chan *client.OrderBookTicker
+	OrderUpdateStream  chan *client.OrderUpdate
+	PartialDepthStream chan *client.PartialDepth
 }
 
 func NewMexcClient(apiKey string, secret string) *MexcClient {
@@ -46,14 +47,15 @@ func NewMexcClient(apiKey string, secret string) *MexcClient {
 		qm:         qm,
 	}
 	return &MexcClient{
-		apiKey:            apiKey,
-		qm:                qm,
-		httpClient:        httpClient,
-		lkm:               lkm,
-		DealStream:        make(chan *client.Deal),
-		BalanceStream:     make(chan *client.Balance),
-		TickersStream:     make(chan *client.OrderBookTicker),
-		OrderUpdateStream: make(chan *client.OrderUpdate),
+		apiKey:             apiKey,
+		qm:                 qm,
+		httpClient:         httpClient,
+		lkm:                lkm,
+		DealStream:         make(chan *client.Deal, 1024),
+		BalanceStream:      make(chan *client.Balance, 1024),
+		TickersStream:      make(chan *client.OrderBookTicker, 1024),
+		OrderUpdateStream:  make(chan *client.OrderUpdate, 1024),
+		PartialDepthStream: make(chan *client.PartialDepth, 1024),
 	}
 }
 
@@ -66,6 +68,7 @@ func (m *MexcClient) Start() {
 		wsOrdersEndpoint,
 		wsETHUSDCTickersEndpoint,
 		wsSTETHUSDCTickersEndpoint,
+		getPartialBookDepthStreamEndpoint(client.STETHUSDC, 5),
 	}
 	subscriptionMsg := map[string]any{"method": "SUBSCRIPTION", "params": params}
 	if err := m.wsConn.WriteJSON(subscriptionMsg); err != nil {
@@ -79,7 +82,7 @@ func (m *MexcClient) Start() {
 				slog.Error("[MexcClient] Failed to read ws message:", "error", err)
 				os.Exit(1)
 			}
-			// log.Printf("[MexcClient] Received ws message: %s\n", string(message))
+			// slog.Debug("[MexcClient] Received ws message", "message", string(message))
 			var wsResponse wsResponse
 			err = json.Unmarshal(message, &wsResponse)
 			if err != nil {
@@ -114,9 +117,31 @@ func (m *MexcClient) Start() {
 				if err != nil {
 					continue
 				}
+			case getPartialBookDepthStreamEndpoint(client.STETHUSDC, 5):
+				err = m.handleWsPartialBookDepthResponse(message)
+				if err != nil {
+					continue
+				}
 			}
 		}
 	}()
+}
+
+func (m *MexcClient) handleWsPartialBookDepthResponse(message []byte) error {
+	var partialDepthMsg wsPartialDepthMessage
+	err := json.Unmarshal(message, &partialDepthMsg)
+	if err != nil || partialDepthMsg.Timestamp == 0 {
+		slog.Warn("[MexcClient] Failed to unmarshal wsPartialDepthMessage:", "error", err)
+		return err
+	}
+	depth, err := partialDepthMsg.toPartialDepth()
+	if err != nil {
+		slog.Warn("[MexcClient] Failed to convert json to OrderUpdate:", "error", err)
+		return err
+	}
+	m.PartialDepthStream <- depth
+	slog.Debug("[MexcClient] Partial depth update", "depth", depth)
+	return nil
 }
 
 func (m *MexcClient) handleWsOrderUpdateMessage(message []byte) error {
@@ -132,6 +157,7 @@ func (m *MexcClient) handleWsOrderUpdateMessage(message []byte) error {
 		return err
 	}
 	m.OrderUpdateStream <- update
+	slog.Debug("[MexcClient] Order update", "order", update)
 	return nil
 }
 
@@ -148,6 +174,7 @@ func (m *MexcClient) handleWsAccountUpdateMessage(message []byte) error {
 		return err
 	}
 	m.BalanceStream <- update
+	slog.Debug("[MexcClient] Balance update", "balance", update)
 	return nil
 }
 
@@ -172,7 +199,7 @@ func (m *MexcClient) handleWsTickerResponse(message []byte) error {
 		slog.Warn("[MexcClient] Unknown ticker symbol. Ignoring.\n", "symbol", ticker.Symbol)
 		return nil
 	}
-	slog.Debug("[MexcClient] Ticker received", "ticker", ticker)
+	slog.Debug("[MexcClient] Ticker update", "ticker", ticker)
 	return nil
 }
 
@@ -189,7 +216,7 @@ func (m *MexcClient) handleWsDealResponse(message []byte) error {
 		return err
 	}
 	m.DealStream <- deal
-	slog.Debug("[MexcClient] Deal received", "deal", deal)
+	slog.Debug("[MexcClient] Deal update", "deal", deal)
 	return nil
 }
 

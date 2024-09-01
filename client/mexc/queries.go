@@ -49,6 +49,7 @@ func (q *queryMaker) getCancelOrderQuery(symbol string, orderId string) string {
 
 func (q *queryMaker) signQuery(qb *client.QueryBuilder) string {
 	timestamp := time.Now().UTC().UnixMilli()
+	// slog.Info("[QUERY MAKER] signing query", "timestamp", timestamp)
 	qb.Add("timestamp", timestamp)
 	signature := q.sign(qb.String())
 	qb.Add("signature", signature)
