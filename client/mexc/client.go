@@ -1,10 +1,10 @@
 package mexc
 
 import (
+	"automata/client"
+	httpclient "automata/http_client"
 	"encoding/json"
 	"log/slog"
-	"mexc-bot/client"
-	httpclient "mexc-bot/http_client"
 	"net/http"
 	"os"
 	"time"
@@ -22,7 +22,7 @@ const (
 	wsSTETHUSDCTickersEndpoint = "spot@public.bookTicker.v3.api@STETHUSDC"
 )
 
-type MexcClient struct {
+type Client struct {
 	wsConn             *websocket.Conn
 	apiKey             string
 	httpClient         *httpclient.HttpClient
@@ -35,7 +35,7 @@ type MexcClient struct {
 	PartialDepthStream chan *client.PartialDepth
 }
 
-func NewMexcClient(apiKey string, secret string) *MexcClient {
+func NewClient(apiKey string, secret string) *Client {
 	headers := make(http.Header)
 	headers.Set("X-MEXC-APIKEY", apiKey)
 	headers.Set("Content-Type", "application/json")
@@ -46,7 +46,7 @@ func NewMexcClient(apiKey string, secret string) *MexcClient {
 		httpClient: httpClient,
 		qm:         qm,
 	}
-	return &MexcClient{
+	return &Client{
 		apiKey:             apiKey,
 		qm:                 qm,
 		httpClient:         httpClient,
@@ -59,7 +59,7 @@ func NewMexcClient(apiKey string, secret string) *MexcClient {
 	}
 }
 
-func (m *MexcClient) Start() {
+func (m *Client) Start() {
 	m.lkm.Start()
 	m.wsConnect()
 	params := []string{
@@ -127,7 +127,7 @@ func (m *MexcClient) Start() {
 	}()
 }
 
-func (m *MexcClient) handleWsPartialBookDepthResponse(message []byte) error {
+func (m *Client) handleWsPartialBookDepthResponse(message []byte) error {
 	var partialDepthMsg wsPartialDepthMessage
 	err := json.Unmarshal(message, &partialDepthMsg)
 	if err != nil || partialDepthMsg.Timestamp == 0 {
@@ -144,7 +144,7 @@ func (m *MexcClient) handleWsPartialBookDepthResponse(message []byte) error {
 	return nil
 }
 
-func (m *MexcClient) handleWsOrderUpdateMessage(message []byte) error {
+func (m *Client) handleWsOrderUpdateMessage(message []byte) error {
 	var accountOrderMsg wsAccountOrdersMessage
 	err := json.Unmarshal(message, &accountOrderMsg)
 	if err != nil || accountOrderMsg.Timestamp == 0 {
@@ -161,7 +161,7 @@ func (m *MexcClient) handleWsOrderUpdateMessage(message []byte) error {
 	return nil
 }
 
-func (m *MexcClient) handleWsAccountUpdateMessage(message []byte) error {
+func (m *Client) handleWsAccountUpdateMessage(message []byte) error {
 	var accountResponse wsAccountUpdateMessage
 	err := json.Unmarshal(message, &accountResponse)
 	if err != nil {
@@ -178,7 +178,7 @@ func (m *MexcClient) handleWsAccountUpdateMessage(message []byte) error {
 	return nil
 }
 
-func (m *MexcClient) handleWsTickerResponse(message []byte) error {
+func (m *Client) handleWsTickerResponse(message []byte) error {
 	var tickerResponse wsTickerResponse
 	err := json.Unmarshal(message, &tickerResponse)
 	if err != nil {
@@ -203,7 +203,7 @@ func (m *MexcClient) handleWsTickerResponse(message []byte) error {
 	return nil
 }
 
-func (m *MexcClient) handleWsDealResponse(message []byte) error {
+func (m *Client) handleWsDealResponse(message []byte) error {
 	var dealResponse wsDealResponse
 	err := json.Unmarshal(message, &dealResponse)
 	if err != nil {
@@ -220,7 +220,7 @@ func (m *MexcClient) handleWsDealResponse(message []byte) error {
 	return nil
 }
 
-func (m *MexcClient) wsConnect() {
+func (m *Client) wsConnect() {
 	endpoint := baseWsUrl + "?listenKey=" + m.lkm.ListenKey()
 	c, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
 	if err != nil {
@@ -240,21 +240,21 @@ func (m *MexcClient) wsConnect() {
 	}()
 }
 
-func (m *MexcClient) Balances() (map[string]client.Balance, error) {
+func (m *Client) Balances() (map[client.Symbol]client.Balance, error) {
 	var account accountResponse
 	err := m.httpClient.Get("/account?"+m.qm.defaultSignature(), &account)
 	if err != nil {
 		slog.Error("[MexcClient] Failed to get account data", "error", err)
 		return nil, err
 	}
-	balances := make(map[string]client.Balance)
+	balances := make(map[client.Symbol]client.Balance)
 	for _, b := range account.Balances {
 		balances[b.Asset] = b
 	}
 	return balances, nil
 }
 
-func (m *MexcClient) PlaceOrder(order *client.Order) error {
+func (m *Client) PlaceOrder(order *client.Order) error {
 	query := m.qm.getOrderQuery(order)
 	err := m.httpClient.Post("/order?"+query, &order)
 	if err != nil {
@@ -265,7 +265,7 @@ func (m *MexcClient) PlaceOrder(order *client.Order) error {
 	return nil
 }
 
-func (m *MexcClient) OrderBookTicker(symbol string) (*client.OrderBookTicker, error) {
+func (m *Client) OrderBookTicker(symbol client.Symbol) (*client.OrderBookTicker, error) {
 	var tickerJson orderBookTicker
 	err := m.httpClient.Get("/ticker/bookTicker?"+m.qm.getSymbolQuery(symbol), &tickerJson)
 	if err != nil {
@@ -281,7 +281,7 @@ func (m *MexcClient) OrderBookTicker(symbol string) (*client.OrderBookTicker, er
 	return ticker, nil
 }
 
-func (m *MexcClient) CancelOrder(symbol string, orderId string) error {
+func (m *Client) CancelOrder(symbol client.Symbol, orderId string) error {
 	var order *client.Order
 	err := m.httpClient.Delete("/order?"+m.qm.getCancelOrderQuery(symbol, orderId), &order)
 	if err != nil {

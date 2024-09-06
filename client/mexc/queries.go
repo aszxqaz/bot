@@ -1,10 +1,10 @@
 package mexc
 
 import (
+	"automata/client"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"mexc-bot/client"
 	"time"
 )
 
@@ -34,13 +34,13 @@ func (q *queryMaker) getListenKeyQuery(listenKey string) string {
 	return q.signQuery(qb)
 }
 
-func (q *queryMaker) getSymbolQuery(symbol string) string {
+func (q *queryMaker) getSymbolQuery(symbol client.Symbol) string {
 	qb := client.NewQueryBuilder()
 	qb.Add("symbol", symbol)
 	return q.signQuery(qb)
 }
 
-func (q *queryMaker) getCancelOrderQuery(symbol string, orderId string) string {
+func (q *queryMaker) getCancelOrderQuery(symbol client.Symbol, orderId string) string {
 	qb := client.NewQueryBuilder()
 	qb.Add("symbol", symbol)
 	qb.Add("orderId", orderId)

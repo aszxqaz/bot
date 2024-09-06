@@ -1,15 +1,14 @@
 package mexc
 
 import (
+	httpclient "automata/http_client"
 	"log"
-	httpclient "mexc-bot/http_client"
 	"sync"
 	"time"
 )
 
 type listenKeyManager struct {
 	listenKey  string
-	time       time.Time
 	mu         sync.Mutex
 	httpClient *httpclient.HttpClient
 	qm         *queryMaker

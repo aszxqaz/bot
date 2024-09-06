@@ -6,19 +6,21 @@ import (
 	"time"
 )
 
+type Symbol string
+
 const (
-	ETHUSDC   = "ETHUSDC"
-	STETHUSDC = "STETHUSDC"
+	ETHUSDC   Symbol = "ETHUSDC"
+	STETHUSDC Symbol = "STETHUSDC"
 )
 
 type jsonbalance struct {
-	Asset  string
+	Asset  Symbol
 	Free   string
 	Locked string
 }
 
 type Balance struct {
-	Asset  string
+	Asset  Symbol
 	Free   float64
 	Locked float64
 }
@@ -42,7 +44,7 @@ func (b *Balance) UnmarshalJSON(data []byte) error {
 }
 
 type OrderBookTicker struct {
-	Symbol      string
+	Symbol      Symbol
 	BidPrice    float64
 	BidQuantity float64
 	AskPrice    float64
@@ -55,7 +57,7 @@ const (
 )
 
 type Deal struct {
-	Symbol    string
+	Symbol    Symbol
 	TradeType int
 	Price     float64
 	Quantity  float64
@@ -73,7 +75,7 @@ const (
 )
 
 type OrderUpdate struct {
-	Symbol             string
+	Symbol             Symbol
 	Timestamp          time.Time
 	RemainAmount       float64
 	TradeType          int
@@ -92,7 +94,7 @@ type PartialDepthPair struct {
 }
 
 type PartialDepth struct {
-	Symbol    string
+	Symbol    Symbol
 	Timestamp time.Time
 	Asks      []PartialDepthPair
 	Bids      []PartialDepthPair

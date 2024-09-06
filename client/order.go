@@ -21,7 +21,7 @@ const (
 )
 
 type jsonorder struct {
-	Symbol  string    `json:"symbol"`
+	Symbol  Symbol    `json:"symbol"`
 	Id      string    `json:"orderId"`
 	Price   string    `json:"price"`
 	OrigQty string    `json:"origQty"`
@@ -31,7 +31,7 @@ type jsonorder struct {
 }
 
 type Order struct {
-	Symbol  string
+	Symbol  Symbol
 	Id      string
 	Price   float64
 	OrigQty float64

@@ -1,7 +1,10 @@
 package mexc
 
-import "strconv"
+import (
+	"automata/client"
+	"strconv"
+)
 
-func getPartialBookDepthStreamEndpoint(symbol string, level int) string {
-	return "spot@public.limit.depth.v3.api@" + symbol + "@" + strconv.Itoa(level)
+func getPartialBookDepthStreamEndpoint(symbol client.Symbol, level int) string {
+	return "spot@public.limit.depth.v3.api@" + string(symbol) + "@" + strconv.Itoa(level)
 }

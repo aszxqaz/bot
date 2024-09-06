@@ -1,28 +1,29 @@
 package robot
 
 import (
+	"automata/client"
+	"automata/client/mexc"
+	"automata/msync"
 	"log/slog"
-	"mexc-bot/client"
-	"mexc-bot/client/mexc"
 )
 
 type Robot struct {
-	m            *mexc.MexcClient
-	Balances     *MuMap[client.Balance]
-	Tickers      *MuMap[client.OrderBookTicker]
-	Orders       *MuMap[client.OrderUpdate]
-	Deals        *MuMap[client.Deal]
-	PartialDepth *MuMap[client.PartialDepth]
+	m            *mexc.Client
+	Balances     *msync.MuMap[client.Symbol, client.Balance]
+	Tickers      *msync.MuMap[client.Symbol, client.OrderBookTicker]
+	Orders       *msync.MuMap[string, client.OrderUpdate]
+	Deals        *msync.MuMap[string, client.Deal]
+	PartialDepth *msync.MuMap[client.Symbol, client.PartialDepth]
 }
 
-func NewRobot(m *mexc.MexcClient) *Robot {
+func NewRobot(m *mexc.Client) *Robot {
 	return &Robot{
 		m:            m,
-		Balances:     NewMuMap[client.Balance](),
-		Tickers:      NewMuMap[client.OrderBookTicker](),
-		Orders:       NewMuMap[client.OrderUpdate](),
-		Deals:        NewMuMap[client.Deal](),
-		PartialDepth: NewMuMap[client.PartialDepth](),
+		Balances:     msync.NewMuMap[client.Symbol, client.Balance](),
+		Tickers:      msync.NewMuMap[client.Symbol, client.OrderBookTicker](),
+		Orders:       msync.NewMuMap[string, client.OrderUpdate](),
+		Deals:        msync.NewMuMap[string, client.Deal](),
+		PartialDepth: msync.NewMuMap[client.Symbol, client.PartialDepth](),
 	}
 }
 

@@ -1,7 +1,7 @@
 package mexc
 
 import (
-	"mexc-bot/client"
+	"automata/client"
 	"strconv"
 	"time"
 )
@@ -10,11 +10,11 @@ type accountResponse struct {
 	Balances []client.Balance `json:"balances"`
 }
 type orderBookTicker struct {
-	Symbol      string `json:"symbol"`
-	BidPrice    string `json:"bidPrice"`
-	BidQuantity string `json:"bidQty"`
-	AskPrice    string `json:"askPrice"`
-	AskQuantity string `json:"askQty"`
+	Symbol      client.Symbol `json:"symbol"`
+	BidPrice    string        `json:"bidPrice"`
+	BidQuantity string        `json:"bidQty"`
+	AskPrice    string        `json:"askPrice"`
+	AskQuantity string        `json:"askQty"`
 }
 
 func (o *orderBookTicker) toOrderBookTicker() (*client.OrderBookTicker, error) {
@@ -68,7 +68,7 @@ type deal struct {
 	TradeTime int64  `json:"T"`
 }
 
-func (d *deal) toDeal(symbol string) (*client.Deal, error) {
+func (d *deal) toDeal(symbol client.Symbol) (*client.Deal, error) {
 	price, err := strconv.ParseFloat(d.Price, 64)
 	if err != nil {
 		return nil, err
@@ -90,10 +90,10 @@ func (d *deal) toDeal(symbol string) (*client.Deal, error) {
 }
 
 type wsDealResponse struct {
-	Endpoint  string `json:"c"`
-	Symbol    string `json:"s"`
-	Deal      deal   `json:"d"`
-	Timestamp int    `json:"t"`
+	Endpoint  string        `json:"c"`
+	Symbol    client.Symbol `json:"s"`
+	Deal      deal          `json:"d"`
+	Timestamp int           `json:"t"`
 }
 
 type wsResponse struct {
@@ -108,10 +108,10 @@ type wsTicker struct {
 }
 
 type wsTickerResponse struct {
-	Endpoint  string   `json:"c"`
-	Ticker    wsTicker `json:"d"`
-	Timestamp int      `json:"t"`
-	Symbol    string   `json:"s"`
+	Endpoint  string        `json:"c"`
+	Ticker    wsTicker      `json:"d"`
+	Timestamp int           `json:"t"`
+	Symbol    client.Symbol `json:"s"`
 }
 
 func (w *wsTickerResponse) toTicker() (*client.OrderBookTicker, error) {
@@ -143,9 +143,9 @@ func (w *wsTickerResponse) toTicker() (*client.OrderBookTicker, error) {
 // WS ACCOUNT UPDATES
 
 type wsAccountUpdate struct {
-	Asset  string `json:"a"`
-	Free   string `json:"f"`
-	Locked string `json:"l"`
+	Asset  client.Symbol `json:"a"`
+	Free   string        `json:"f"`
+	Locked string        `json:"l"`
 }
 
 type wsAccountUpdateMessage struct {
@@ -184,7 +184,7 @@ type wsAccountOrder struct {
 
 type wsAccountOrdersMessage struct {
 	Endpoint  string         `json:"c"`
-	Symbol    string         `json:"s"`
+	Symbol    client.Symbol  `json:"s"`
 	Timestamp int64          `json:"t"`
 	Data      wsAccountOrder `json:"d"`
 }
@@ -248,7 +248,7 @@ type wsPartialDepthMessageData struct {
 
 type wsPartialDepthMessage struct {
 	Endpoint  string                    `json:"c"`
-	Symbol    string                    `json:"s"`
+	Symbol    client.Symbol             `json:"s"`
 	Timestamp int64                     `json:"t"`
 	Data      wsPartialDepthMessageData `json:"d"`
 }
