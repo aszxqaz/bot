@@ -7,14 +7,22 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func selectPriceFromPayeerOrders(action payeer.Action, info payeer.PairsOrderInfo, placementValueOffset decimal.Decimal) decimal.Decimal {
+var cent = decimal.RequireFromString(".01")
+
+func selectPriceFromPayeerOrders(
+	action payeer.Action,
+	info payeer.PairsOrderInfo,
+	placementValueOffset decimal.Decimal,
+	elevationPriceFraction decimal.Decimal,
+) decimal.Decimal {
 	acc := decimal.NewFromInt(0)
 	var selectedPrice decimal.Decimal
 	orders := info.Bids
 	if action == payeer.ACTION_SELL {
 		orders = info.Asks
 	}
-	for _, order := range orders {
+	endIndex := 0
+	for i, order := range orders {
 		value, _ := decimal.NewFromString(order.Value)
 		acc = acc.Add(value)
 		if acc.GreaterThanOrEqual(placementValueOffset) {
@@ -22,16 +30,40 @@ func selectPriceFromPayeerOrders(action payeer.Action, info payeer.PairsOrderInf
 			if err != nil {
 				panic(err)
 			}
-			cent, _ := decimal.NewFromString(".01")
 			if action == payeer.ACTION_SELL {
 				selectedPrice = p.Sub(cent)
 			} else {
 				selectedPrice = p.Add(cent)
 			}
-			slog.Info("Payeer price chosen:", "price", selectedPrice.String())
+			endIndex = i
 			break
 		}
 	}
+	afterOffset := selectedPrice.Copy()
+	fractionAbs := elevationPriceFraction.Mul(selectedPrice)
+	for i := endIndex - 1; i >= 0; i-- {
+		price := decimal.RequireFromString(orders[i].Price)
+		diff := price.Sub(selectedPrice).Abs().Add(cent)
+		if diff.LessThanOrEqual(fractionAbs) {
+			if action == payeer.ACTION_SELL {
+				selectedPrice = selectedPrice.Sub(diff)
+			} else {
+				selectedPrice = selectedPrice.Add(diff)
+			}
+			fractionAbs = fractionAbs.Sub(diff)
+			if fractionAbs.LessThanOrEqual(decimal.Zero) {
+				break
+			}
+		}
+		// if decimal.RequireFromString(orders[i].Price).Equal(selectedPrice) {
+		// if action == payeer.ACTION_SELL {
+		// 	selectedPrice = selectedPrice.Sub(cent)
+		// } else {
+		// 	selectedPrice = selectedPrice.Add(cent)
+		// }
+		// }
+	}
+	slog.Debug("Price chosen:", "after offset", afterOffset.String(), "after elevation", selectedPrice.String(), "diff", selectedPrice.Sub(afterOffset).Abs())
 	return selectedPrice
 }
 
