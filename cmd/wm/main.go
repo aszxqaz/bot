@@ -13,11 +13,9 @@ const PLACEMENT_VALUE_OFFSET = 5000
 
 func main() {
 	slog.SetLogLoggerLevel(slog.LevelError)
+	fmt.Println("PLACEMENT_VALUE_OFFSET = ", PLACEMENT_VALUE_OFFSET)
 	client := createClient()
 	orders := fetchOrders(client)
-
-	fmt.Println("bids\n", printOrders(orders.Bids))
-	fmt.Println("asks\n", printOrders(orders.Asks))
 
 	bidsWma := getWeightedMeanAverage(orders.Bids)
 	asksWma := getWeightedMeanAverage(orders.Asks)
@@ -32,4 +30,8 @@ func main() {
 	selectedSellPrice := selectPriceFromPayeerOrders(payeer.ACTION_SELL, orders, decimal.NewFromInt(PLACEMENT_VALUE_OFFSET))
 
 	fmt.Printf("Buy Price: %s, Sell Price: %s\n", selectedBuyPrice.StringFixed(2), selectedSellPrice.StringFixed(2))
+
+	fmt.Println("bids", printOrders(orders.Bids, true, selectedBuyPrice.String()))
+	fmt.Println("asks", printOrders(orders.Asks, false, selectedSellPrice.String()))
+
 }
