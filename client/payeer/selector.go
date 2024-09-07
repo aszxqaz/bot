@@ -16,7 +16,7 @@ type PayeerPriceSelectorContext struct {
 type PayeerPriceSelectorConfig struct {
 	PlacementValueOffset   decimal.Decimal
 	ElevationPriceFraction decimal.Decimal
-	MaxWmaRatio            decimal.Decimal
+	MaxWmaSurplus          decimal.Decimal
 	WmaTake                int
 }
 
@@ -47,12 +47,19 @@ func (ps *PayeerPriceSelector) filterByWmaRatio(pctx *PayeerPriceSelectorContext
 	orders := ps.resolveOrders(pctx)
 	wma := ps.getWeightedMeanAverage(orders)
 	slog.Info("[PayeerPriceSelector] filtered by wma ratio", "action", pctx.action, "wma", wma.String())
-	isOk := prevPrice.LessThan(wma.Mul(ps.config.MaxWmaRatio))
 	if pctx.action == ACTION_SELL {
-		isOk = prevPrice.GreaterThan(wma.Mul(ps.config.MaxWmaRatio))
+		wmaVal := decimal.NewFromInt(1).Sub(ps.config.MaxWmaSurplus)
+		wmaNum := wmaVal.Mul(wma)
+		isOk := prevPrice.GreaterThan(wmaNum)
+		slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "price", prevPrice.String())
+		return isOk, prevPrice
+	} else {
+		wmaVal := decimal.NewFromInt(1).Add(ps.config.MaxWmaSurplus)
+		wmaNum := wmaVal.Mul(wma)
+		isOk := prevPrice.LessThan(wmaNum)
+		slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "price", prevPrice.String())
+		return isOk, prevPrice
 	}
-	slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "price", prevPrice.String())
-	return isOk, prevPrice
 }
 
 func (ps *PayeerPriceSelector) selectByElevation(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {

@@ -27,7 +27,7 @@ func main() {
 		SelectorConfig: &payeer.PayeerPriceSelectorConfig{
 			PlacementValueOffset:   decimal.NewFromInt(5000),
 			ElevationPriceFraction: decimal.RequireFromString(".00005"),
-			MaxWmaRatio:            decimal.RequireFromString("1.005"),
+			MaxWmaSurplus:          decimal.RequireFromString(".005"),
 			WmaTake:                15,
 		},
 	})

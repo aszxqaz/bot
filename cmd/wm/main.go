@@ -1,11 +1,8 @@
 package main
 
 import (
-	"automata/client/payeer"
 	"fmt"
 	"log/slog"
-
-	"github.com/shopspring/decimal"
 )
 
 const TAKE = 15
@@ -17,21 +14,23 @@ func main() {
 	client := createClient()
 	orders := fetchOrders(client)
 
-	fmt.Println("Bids")
-	printOrders(orders.Bids)
-	fmt.Println("Asks")
-	printOrders(orders.Asks)
+	fmt.Println(orders)
 
-	selector := payeer.NewPayeerPriceSelector(&payeer.PayeerPriceSelectorConfig{
-		PlacementValueOffset:   decimal.NewFromInt(5000),
-		ElevationPriceFraction: decimal.RequireFromString(".00005"),
-		MaxWmaRatio:            decimal.RequireFromString("1.005"),
-		WmaTake:                TAKE,
-	})
+	// fmt.Println("Bids")
+	// printOrders(orders.Bids)
+	// fmt.Println("Asks")
+	// printOrders(orders.Asks)
 
-	_, buyPrice := selector.SelectPrice(payeer.ACTION_BUY, &orders)
-	fmt.Println("bids", printOrdersWithHeroPrice(orders.Bids, true, buyPrice.StringFixed(2)))
+	// selector := payeer.NewPayeerPriceSelector(&payeer.PayeerPriceSelectorConfig{
+	// 	PlacementValueOffset:   decimal.NewFromInt(5000),
+	// 	ElevationPriceFraction: decimal.RequireFromString(".00005"),
+	// 	MaxWmaRatio:            decimal.RequireFromString("1.005"),
+	// 	WmaTake:                TAKE,
+	// })
 
-	_, sellPrice := selector.SelectPrice(payeer.ACTION_SELL, &orders)
-	fmt.Println("asks", printOrdersWithHeroPrice(orders.Asks, false, sellPrice.StringFixed(2)))
+	// _, buyPrice := selector.SelectPrice(payeer.ACTION_BUY, &orders)
+	// fmt.Println("bids", printOrdersWithHeroPrice(orders.Bids, true, buyPrice.StringFixed(2)))
+
+	// _, sellPrice := selector.SelectPrice(payeer.ACTION_SELL, &orders)
+	// fmt.Println("asks", printOrdersWithHeroPrice(orders.Asks, false, sellPrice.StringFixed(2)))
 }

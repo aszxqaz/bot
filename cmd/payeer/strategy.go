@@ -317,7 +317,7 @@ func (s *ValueOffsetStrategy) fetchPayeerBalance() map[string]payeer.Balance {
 	if !balance.Success {
 		panic(balance.Error)
 	}
-	slog.Info("Payeer balance:", "balance", balance.Balances)
+	slog.Debug("Payeer balance:", "balance", balance.Balances)
 	return balance.Balances
 }
 
