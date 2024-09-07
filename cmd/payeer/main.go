@@ -6,6 +6,8 @@ import (
 
 	"log/slog"
 	"os"
+
+	"github.com/shopspring/decimal"
 )
 
 func main() {
@@ -19,9 +21,15 @@ func main() {
 	binanceClient := binance.NewClient()
 	binanceClient.Start()
 	strategy := NewVolumeOffsetStrategy(payeerClient, binanceClient, &ValueOffsetStrategyOptions{
-		MaxPriceRatio:          "1.001",
-		PlacementValueOffset:   "1000",
+		MaxPriceRatio: "1.001",
+		// PlacementValueOffset:   "1000",
 		ReplacementValueOffset: "10000",
+		SelectorConfig: &payeer.PayeerPriceSelectorConfig{
+			PlacementValueOffset:   decimal.NewFromInt(5000),
+			ElevationPriceFraction: decimal.RequireFromString(".00005"),
+			MaxWmaRatio:            decimal.RequireFromString("1.005"),
+			WmaTake:                15,
+		},
 	})
 	strategy.Run()
 }

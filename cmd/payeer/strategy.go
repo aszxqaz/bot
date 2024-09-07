@@ -15,13 +15,14 @@ const AMOUNT = "0.0001"
 var amountDecimal, _ = decimal.NewFromString(AMOUNT)
 
 type ValueOffsetStrategyOptions struct {
-	MaxPriceRatio          string
-	PlacementValueOffset   string
+	MaxPriceRatio string
+	// PlacementValueOffset   string
 	ReplacementValueOffset string
+	SelectorConfig         *payeer.PayeerPriceSelectorConfig
 }
 
 type constansts struct {
-	placementValueOffset   decimal.Decimal
+	// placementValueOffset   decimal.Decimal
 	replacementValueOffset decimal.Decimal
 	maxPriceRatio          decimal.Decimal
 }
@@ -43,6 +44,7 @@ type ValueOffsetStrategy struct {
 	options       *ValueOffsetStrategyOptions
 	binanceClient *binance.Client
 	payeerClient  *payeer.Client
+	selector      *payeer.PayeerPriceSelector
 	constansts
 	store
 }
@@ -56,10 +58,10 @@ func NewVolumeOffsetStrategy(
 	if err != nil {
 		panic(err)
 	}
-	valueOffset, err := decimal.NewFromString(options.PlacementValueOffset)
-	if err != nil {
-		panic(err)
-	}
+	// valueOffset, err := decimal.NewFromString(options.PlacementValueOffset)
+	// if err != nil {
+	// 	panic(err)
+	// }
 	replacementValueOffset, err := decimal.NewFromString(options.ReplacementValueOffset)
 	if err != nil {
 		panic(err)
@@ -69,7 +71,7 @@ func NewVolumeOffsetStrategy(
 		binanceClient: binanceClient,
 		payeerClient:  payeerClient,
 		constansts: constansts{
-			placementValueOffset:   valueOffset,
+			// placementValueOffset:   valueOffset,
 			replacementValueOffset: replacementValueOffset,
 			maxPriceRatio:          maxPriceDelta,
 		},
@@ -80,6 +82,7 @@ func NewVolumeOffsetStrategy(
 			minWeights:         msync.NewMu(600),
 			weightsTimestamp:   msync.NewMu(time.Now()),
 		},
+		selector: payeer.NewPayeerPriceSelector(options.SelectorConfig),
 	}
 }
 
@@ -112,19 +115,21 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action) {
 			}
 		}
 		orders := s.fetchPayeerOrders()
-		price := s.selectPriceFromPayeerOrders(isSell, orders)
-		binanceResult := s.fetchBinanceBidPrice()
-		rsp := s.placeOrder(isSell, AMOUNT, price.String())
-		var binancePrice decimal.Decimal
-		if isSell {
-			binancePrice = binanceResult.Ask
-		} else {
-			binancePrice = binanceResult.Bid
+		ok, price := s.selector.SelectPrice(action, &orders)
+		if ok {
+			binanceResult := s.fetchBinanceBidPrice()
+			rsp := s.placeOrder(isSell, AMOUNT, price.String())
+			var binancePrice decimal.Decimal
+			if isSell {
+				binancePrice = binanceResult.Ask
+			} else {
+				binancePrice = binanceResult.Bid
+			}
+			s.binancePricePlaced.Set(rsp.OrderId, placedMetadata{
+				binancePrice: binancePrice,
+				isSell:       isSell,
+			})
 		}
-		s.binancePricePlaced.Set(rsp.OrderId, placedMetadata{
-			binancePrice: binancePrice,
-			isSell:       isSell,
-		})
 	}
 }
 
@@ -275,33 +280,33 @@ func (s *ValueOffsetStrategy) getTopValueOffset(price decimal.Decimal, orders pa
 	return acc
 }
 
-func (s *ValueOffsetStrategy) selectPriceFromPayeerOrders(isSell bool, info payeer.PairsOrderInfo) decimal.Decimal {
-	acc := decimal.NewFromInt(0)
-	var selectedPrice decimal.Decimal
-	orders := info.Bids
-	if isSell {
-		orders = info.Asks
-	}
-	for _, order := range orders {
-		value, _ := decimal.NewFromString(order.Value)
-		acc = acc.Add(value)
-		if acc.GreaterThanOrEqual(s.placementValueOffset) {
-			p, err := decimal.NewFromString(order.Price)
-			if err != nil {
-				panic(err)
-			}
-			cent, _ := decimal.NewFromString(".01")
-			if isSell {
-				selectedPrice = p.Sub(cent)
-			} else {
-				selectedPrice = p.Add(cent)
-			}
-			slog.Info("Payeer price chosen:", "price", selectedPrice.String())
-			break
-		}
-	}
-	return selectedPrice
-}
+// func (s *ValueOffsetStrategy) selectPriceFromPayeerOrders(isSell bool, info payeer.PairsOrderInfo) decimal.Decimal {
+// 	acc := decimal.NewFromInt(0)
+// 	var selectedPrice decimal.Decimal
+// 	orders := info.Bids
+// 	if isSell {
+// 		orders = info.Asks
+// 	}
+// 	for _, order := range orders {
+// 		value, _ := decimal.NewFromString(order.Value)
+// 		acc = acc.Add(value)
+// 		if acc.GreaterThanOrEqual(s.placementValueOffset) {
+// 			p, err := decimal.NewFromString(order.Price)
+// 			if err != nil {
+// 				panic(err)
+// 			}
+// 			cent, _ := decimal.NewFromString(".01")
+// 			if isSell {
+// 				selectedPrice = p.Sub(cent)
+// 			} else {
+// 				selectedPrice = p.Add(cent)
+// 			}
+// 			slog.Info("Payeer price chosen:", "price", selectedPrice.String())
+// 			break
+// 		}
+// 	}
+// 	return selectedPrice
+// }
 
 func (s *ValueOffsetStrategy) fetchPayeerBalance() map[string]payeer.Balance {
 	balance, err := s.payeerClient.Balance()

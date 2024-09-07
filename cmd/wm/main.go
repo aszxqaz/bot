@@ -17,18 +17,21 @@ func main() {
 	client := createClient()
 	orders := fetchOrders(client)
 
-	fraction := decimal.RequireFromString("0.00005") // ~ 250 roubles
+	fmt.Println("Bids")
+	printOrders(orders.Bids)
+	fmt.Println("Asks")
+	printOrders(orders.Asks)
 
-	selectedBuyPrice := selectPriceFromPayeerOrders(payeer.ACTION_BUY, orders, decimal.NewFromInt(PLACEMENT_VALUE_OFFSET), fraction)
-	fmt.Println("bids", printOrders(orders.Bids, true, selectedBuyPrice.String()))
+	selector := payeer.NewPayeerPriceSelector(&payeer.PayeerPriceSelectorConfig{
+		PlacementValueOffset:   decimal.NewFromInt(5000),
+		ElevationPriceFraction: decimal.RequireFromString(".00005"),
+		MaxWmaRatio:            decimal.RequireFromString("1.005"),
+		WmaTake:                TAKE,
+	})
 
-	selectedSellPrice := selectPriceFromPayeerOrders(payeer.ACTION_SELL, orders, decimal.NewFromInt(PLACEMENT_VALUE_OFFSET), fraction)
-	fmt.Println("asks", printOrders(orders.Asks, false, selectedSellPrice.String()))
+	_, buyPrice := selector.SelectPrice(payeer.ACTION_BUY, &orders)
+	fmt.Println("bids", printOrdersWithHeroPrice(orders.Bids, true, buyPrice.StringFixed(2)))
 
-	// Averages
-	bidsWma := getWeightedMeanAverage(orders.Bids)
-	asksWma := getWeightedMeanAverage(orders.Asks)
-	fmt.Printf("Asks WMA: %s, Bids WMA: %s\n", asksWma.StringFixed(2), bidsWma.StringFixed(2))
-	avg := asksWma.Add(bidsWma).Div(decimal.NewFromInt(2))
-	fmt.Printf("Average: %s\n", avg.StringFixed(2))
+	_, sellPrice := selector.SelectPrice(payeer.ACTION_SELL, &orders)
+	fmt.Println("asks", printOrdersWithHeroPrice(orders.Asks, false, sellPrice.StringFixed(2)))
 }

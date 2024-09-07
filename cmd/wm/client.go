@@ -12,7 +12,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func printOrders(orders []payeer.OrdersOrder, isDesc bool, heroPrice string) string {
+func printOrders(orders []payeer.OrdersOrder) {
+	for _, order := range orders {
+		fmt.Printf("%12s | %11s | %s\n", order.Price, order.Amount, order.Value)
+	}
+}
+
+func printOrdersWithHeroPrice(orders []payeer.OrdersOrder, isDesc bool, heroPrice string) string {
 	orders = append(orders, payeer.OrdersOrder{Price: heroPrice, Value: "0"})
 	slices.SortFunc(orders, func(o1 payeer.OrdersOrder, o2 payeer.OrdersOrder) int {
 		price1 := decimal.RequireFromString(o1.Price)
