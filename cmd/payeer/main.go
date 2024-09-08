@@ -38,6 +38,7 @@ func main() {
 		},
 		BuyEnabled:  true,
 		SellEnabled: true,
+		Amount:      decimal.RequireFromString("0.0001"),
 	})
 	strategy.Run()
 }

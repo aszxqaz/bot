@@ -11,10 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const AMOUNT = "0.0001"
-
-var amountDecimal, _ = decimal.NewFromString(AMOUNT)
-
 type ValueOffsetStrategyOptions struct {
 	MaxPriceRatio string
 	// PlacementValueOffset   string
@@ -24,6 +20,7 @@ type ValueOffsetStrategyOptions struct {
 	BinanceTickerInterval  time.Duration
 	BuyEnabled             bool
 	SellEnabled            bool
+	Amount                 decimal.Decimal
 }
 
 type constansts struct {
@@ -122,7 +119,7 @@ func (s *ValueOffsetStrategy) Run() {
 
 func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.Pair) {
 	for {
-		time.Sleep(time.Millisecond * 500)
+		time.Sleep(time.Second * 2)
 		if shouldWait, ok := s.wait.Get(pair); ok {
 			if shouldWait {
 				continue
@@ -139,12 +136,13 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 		if skip {
 			continue
 		}
-		orders := s.fetchPayeerOrders()
+		time.Sleep(500 * time.Millisecond)
+		orders := s.fetchPayeerOrders(pair)
 		ok, price := s.selector.SelectPrice(action, &orders)
 		if ok {
 			if action == payeer.ACTION_SELL {
-				btcAvailable := decimal.NewFromFloat(s.fetchPayeerBalance()[pair.Base()].Available)
-				if btcAvailable.LessThan(amountDecimal) {
+				baseAssetAvailable := decimal.NewFromFloat(s.fetchPayeerBalance()[pair.Base()].Available)
+				if baseAssetAvailable.LessThan(s.options.Amount) {
 					continue
 				}
 			}
@@ -153,7 +151,7 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 				slog.Warn("[ValueOffsetStrategy] no binance ticker found", "symbol", s.options.Pairs[pair])
 				continue
 			}
-			rsp := s.placeOrder(action, AMOUNT, price.String())
+			rsp := s.placeOrder(action, s.options.Amount.String(), price.String())
 			var binancePrice decimal.Decimal
 			if action == payeer.ACTION_SELL {
 				binancePrice = decimal.RequireFromString(binancePrices.AskPrice)
@@ -178,7 +176,8 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 			slog.Warn("[ValueOffsetStrategy] no binance ticker found", "symbol", s.options.Pairs[pair])
 			continue
 		}
-		orders := s.fetchPayeerOrders()
+		time.Sleep(500 * time.Millisecond)
+		orders := s.fetchPayeerOrders(pair)
 		orderIds := []int{}
 		s.binancePricePlaced.Range(func(key int, data placedMetadata) bool {
 			t, ok := s.times.Get(key)
@@ -366,8 +365,8 @@ func (s *ValueOffsetStrategy) fetchPayeerBalance() map[string]payeer.Balance {
 	return balance.Balances
 }
 
-func (s *ValueOffsetStrategy) fetchPayeerOrders() payeer.PairsOrderInfo {
-	orders, err := s.payeerClient.Orders([]payeer.Pair{payeer.PAIR_BTCRUB})
+func (s *ValueOffsetStrategy) fetchPayeerOrders(pair payeer.Pair) payeer.PairsOrderInfo {
+	orders, err := s.payeerClient.Orders([]payeer.Pair{pair})
 	if err != nil {
 		panic(err)
 	}
@@ -376,7 +375,7 @@ func (s *ValueOffsetStrategy) fetchPayeerOrders() payeer.PairsOrderInfo {
 		slog.Error("[ValueOffsetStrategy] Orders response error", "error", orders.Error)
 		os.Exit(1)
 	}
-	return orders.Pairs[payeer.PAIR_BTCRUB]
+	return orders.Pairs[pair]
 }
 
 type DecimalPrices struct {
@@ -425,25 +424,4 @@ func (s *ValueOffsetStrategy) updateWeights(count int) {
 // 		time.Sleep(time.Millisecond * 10)
 // 		slog.Info("Waiting for weights to reach", "count", count)
 // 	}
-// }
-
-// func (s *ValueOffsetStrategy) getBinanceConvertedBidPrice() decimal.Decimal {
-// 	binanceBidPrice := s.fetchBinanceBidPrice()
-// 	rsp, err := s.payeerClient.Tickers([]payeer.Pair{payeer.PAIR_USDTRUB})
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	if !rsp.Success {
-// 		panic(rsp.Error)
-// 	}
-// 	usdtRubBid, _ := decimal.NewFromString(rsp.Pairs[payeer.PAIR_USDTRUB].Bid)
-// 	usdtRubAsk, _ := decimal.NewFromString(rsp.Pairs[payeer.PAIR_USDTRUB].Ask)
-// 	usdtRubAvg := usdtRubAsk.Add(usdtRubBid).Div(decimal.NewFromInt(2))
-
-// 	slog.Info("Payeer data:", "usdt_rub avg", usdtRubAvg.String())
-
-// 	binanceAfterPrice := usdtRubAvg.Mul(binanceBidPrice)
-// 	slog.Info("Binance price after conversion:", "price", binanceAfterPrice.String())
-
-// 	return binanceAfterPrice
 // }

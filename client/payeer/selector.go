@@ -47,25 +47,21 @@ func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) 
 func (ps *PayeerPriceSelector) filterByWmaRatio(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
 	orders := ps.resolveOrders(pctx)
 	wma := ps.getWeightedMeanAverage(orders)
-	slog.Info("[PayeerPriceSelector] filtered by wma ratio", "action", pctx.action, "wma", wma.String())
+	isOk := false
+	var wmaVal decimal.Decimal
 	if pctx.action == ACTION_SELL {
-		wmaVal := decimal.NewFromInt(1).Sub(ps.config.MaxWmaSurplus)
-		wmaNum := wmaVal.Mul(wma)
-		isOk := prevPrice.GreaterThan(wmaNum)
-		slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "price", prevPrice.String())
-		return isOk, prevPrice
+		wmaVal = decimal.NewFromInt(1).Sub(ps.config.MaxWmaSurplus).Mul(wma)
+		isOk = prevPrice.GreaterThan(wmaVal)
 	} else {
-		wmaVal := decimal.NewFromInt(1).Add(ps.config.MaxWmaSurplus)
-		wmaNum := wmaVal.Mul(wma)
-		isOk := prevPrice.LessThan(wmaNum)
-		slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "price", prevPrice.String())
-		return isOk, prevPrice
+		wmaVal = decimal.NewFromInt(1).Add(ps.config.MaxWmaSurplus).Mul(wma)
+		isOk = prevPrice.LessThan(wmaVal)
 	}
+	slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "action", pctx.action, "price", prevPrice.String(), "wma", wma.StringFixed(2), "wma surplus", ps.config.MaxWmaSurplus.StringFixed(6), "wma adjusted", wmaVal.StringFixed(2))
+	return isOk, prevPrice
 }
 
 func (ps *PayeerPriceSelector) selectByElevation(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
 	fractionAbs := ps.config.ElevationPriceFraction.Mul(prevPrice)
-	slog.Info("[PayeerPriceSelector] selected by elevation", "fractionAbs", fractionAbs.StringFixed(2))
 	orders := ps.resolveOrders(pctx)
 	prevPriceIndex := 0
 	for i, order := range orders {
@@ -79,7 +75,6 @@ func (ps *PayeerPriceSelector) selectByElevation(pctx *PayeerPriceSelectorContex
 			break
 		}
 	}
-	slog.Info("[PayeerPriceSelector] prevPriceIndex", "privpriceindex", prevPriceIndex)
 	afterPrice := prevPrice.Copy()
 	for i := prevPriceIndex; i >= 0; i-- {
 		price := decimal.RequireFromString(orders[i].Price)
@@ -95,7 +90,7 @@ func (ps *PayeerPriceSelector) selectByElevation(pctx *PayeerPriceSelectorContex
 			}
 		}
 	}
-	slog.Info("[PayeerPriceSelector] selected by elevation", "price", afterPrice.StringFixed(2), "elevation", afterPrice.Sub(prevPrice).Abs())
+	slog.Info("[PayeerPriceSelector] selected by elevation", "price", afterPrice.StringFixed(2), "fractionAbs", fractionAbs.StringFixed(2), "elevation", afterPrice.Sub(prevPrice).Abs())
 	return true, afterPrice
 }
 
@@ -160,7 +155,7 @@ func (ps *PayeerPriceSelector) getWeightedMeanAverage(orders []OrdersOrder) deci
 		amount, _ := decimal.NewFromString(order.Amount)
 		totalValue = totalValue.Add(value)
 		totalAmount = totalAmount.Add(amount)
-		if (ps.config.WmaTake > 0 && i == ps.config.WmaTake) &&
+		if (ps.config.WmaTake > 0 && i == ps.config.WmaTake) ||
 			(ps.config.WmaTakeAmount.IsPositive() && totalAmount.GreaterThan(ps.config.WmaTakeAmount)) {
 			break
 		}
