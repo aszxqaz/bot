@@ -32,7 +32,7 @@ func main() {
 		SelectorConfig: &payeer.PayeerPriceSelectorConfig{
 			PlacementValueOffset:   decimal.NewFromInt(5000),
 			ElevationPriceFraction: decimal.RequireFromString(".00005"),
-			MaxWmaSurplus:          decimal.RequireFromString(".005"),
+			MaxWmaSurplus:          decimal.RequireFromString(".003"),
 			WmaTakeAmount:          decimal.RequireFromString(".025"),
 			WmaTake:                0,
 		},

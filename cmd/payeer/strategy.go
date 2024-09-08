@@ -120,6 +120,7 @@ func (s *ValueOffsetStrategy) Run() {
 
 func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.Pair) {
 	for {
+		time.Sleep(time.Millisecond * 500)
 		skip := false
 		s.orders.Range(func(key int, value payeer.OrderParams) bool {
 			if value.Action == action {
