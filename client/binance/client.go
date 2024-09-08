@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	baseWsUrl = "wss://ws-api.binance.com:443/ws-api/v3"
+	baseWsUrl     = "wss://ws-api.binance.com:443/ws-api/v3"
+	baseStreamUrl = "wss://data-stream.binance.vision"
 )
 
 // {
@@ -29,10 +32,43 @@ func NewClient() *Client {
 	return &Client{}
 }
 
-func (b *Client) Start() {
-	b.wsConnect()
-	// go b.listen()
+func (b *Client) SubscribeTicker(symbol Symbol, interval time.Duration) chan OrderBookTickerStreamResult {
+	url := baseStreamUrl + "/ws/" + strings.ToLower(string(symbol)) + "@bookTicker"
+	slog.Debug("[BinanceClient] SubscribeTicker called", "url", url)
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		slog.Error("[BinanceClient] Failed to dial stream", "error", err)
+		os.Exit(1)
+	}
+	orders := make(chan OrderBookTickerStreamResult, 1024)
+	go func() {
+		now := time.Now()
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				slog.Error("[BinanceClient] Failed to read ws message:", "error", err)
+				os.Exit(1)
+			}
+			slog.Debug("[BinanceClient] Received ws message", "symbol", string(symbol), "message", string(msg))
+			var result OrderBookTickerStreamResult
+			err = json.Unmarshal(msg, &result)
+			if err != nil {
+				slog.Warn("[BinanceClient] Failed to unmarshal ws message as OrderBookTickerStreamResult:", "error", err)
+				continue
+			}
+			if time.Since(now) >= interval {
+				now = time.Now()
+				orders <- result
+			}
+		}
+	}()
+	return orders
 }
+
+// func (b *Client) Start() {
+// 	b.wsConnect()
+// 	go b.listen()
+// }
 
 func (b *Client) listen() {
 	for {
@@ -66,38 +102,38 @@ func (b *Client) listen() {
 	// }
 }
 
-func (b *Client) GetOrderBookTickers(symbols []Symbol) (*OrderBookTickerWsResponse, error) {
-	request := NewOrderBookTickerWsRequest(symbols)
-	bytes, _ := json.Marshal(request)
-	slog.Debug("[BinanceClient] OrderBookTickerWsRequest", "json", string(bytes))
-	err := b.wsConn.WriteJSON(request)
-	if err != nil {
-		slog.Error("[BinanceClient] Failed to send ws request:", "error", err)
-		return nil, err
-	}
-	_, message, err := b.wsConn.ReadMessage()
-	if err != nil {
-		slog.Error("[BinanceClient] Failed to read ws response:", "error", err)
-		return nil, err
-	}
-	var wsResponse wsResponse
-	err = json.Unmarshal(message, &wsResponse)
-	if err != nil {
-		slog.Warn("[BinanceClient] Failed to unmarshal ws response as wsResponse:", "error", err)
-		return nil, err
-	}
-	if wsResponse.Status >= 400 {
-		slog.Error("[BinanceClient] GetOrderBookTickers error:", "code", wsResponse.Error.Code, "message", wsResponse.Error.Message)
-		return nil, err
-	}
-	var resp OrderBookTickerWsResponse
-	err = json.Unmarshal(message, &resp)
-	if err != nil {
-		slog.Error("[BinanceClient] Failed to unmarshal ws response as OrderBookTickerWsResponse:", "error", err)
-		return nil, err
-	}
-	return &resp, nil
-}
+// func (b *Client) GetOrderBookTickers(symbols []Symbol) (*OrderBookTickerWsResponse, error) {
+// 	request := NewOrderBookTickerWsRequest(symbols)
+// 	bytes, _ := json.Marshal(request)
+// 	slog.Debug("[BinanceClient] OrderBookTickerWsRequest", "json", string(bytes))
+// 	err := b.wsConn.WriteJSON(request)
+// 	if err != nil {
+// 		slog.Error("[BinanceClient] Failed to send ws request:", "error", err)
+// 		return nil, err
+// 	}
+// 	_, message, err := b.wsConn.ReadMessage()
+// 	if err != nil {
+// 		slog.Error("[BinanceClient] Failed to read ws response:", "error", err)
+// 		return nil, err
+// 	}
+// 	var wsResponse wsResponse
+// 	err = json.Unmarshal(message, &wsResponse)
+// 	if err != nil {
+// 		slog.Warn("[BinanceClient] Failed to unmarshal ws response as wsResponse:", "error", err)
+// 		return nil, err
+// 	}
+// 	if wsResponse.Status >= 400 {
+// 		slog.Error("[BinanceClient] GetOrderBookTickers error:", "code", wsResponse.Error.Code, "message", wsResponse.Error.Message)
+// 		return nil, err
+// 	}
+// 	var resp OrderBookTickerWsResponse
+// 	err = json.Unmarshal(message, &resp)
+// 	if err != nil {
+// 		slog.Error("[BinanceClient] Failed to unmarshal ws response as OrderBookTickerWsResponse:", "error", err)
+// 		return nil, err
+// 	}
+// 	return &resp, nil
+// }
 
 func (b *Client) wsConnect() {
 	wsConn, _, err := websocket.DefaultDialer.Dial(baseWsUrl, nil)

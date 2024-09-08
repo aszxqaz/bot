@@ -1,5 +1,7 @@
 package payeer
 
+import "strings"
+
 // Trade sides
 type Action string
 
@@ -83,6 +85,18 @@ const (
 	// "MATIC_BTC"
 	// "USDC_USDT"
 )
+
+func (p Pair) String() string {
+	return string(p)
+}
+
+func (p Pair) Base() string {
+	return strings.Split(string(p), "_")[0]
+}
+
+func (p Pair) Quote() string {
+	return strings.Split(string(p), "_")[1]
+}
 
 // Order types
 type OrderType string

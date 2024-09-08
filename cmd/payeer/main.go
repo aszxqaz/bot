@@ -3,6 +3,7 @@ package main
 import (
 	"automata/client/binance"
 	"automata/client/payeer"
+	"time"
 
 	"log/slog"
 	"os"
@@ -19,9 +20,13 @@ func main() {
 		Secret: secret,
 	})
 	binanceClient := binance.NewClient()
-	binanceClient.Start()
+
 	strategy := NewVolumeOffsetStrategy(payeerClient, binanceClient, &ValueOffsetStrategyOptions{
-		MaxPriceRatio: "1.001",
+		Pairs: map[payeer.Pair]binance.Symbol{
+			payeer.PAIR_BTCRUB: binance.SYMBOL_BTCUSDT,
+		},
+		BinanceTickerInterval: time.Millisecond * 500,
+		MaxPriceRatio:         "1.001",
 		// PlacementValueOffset:   "1000",
 		ReplacementValueOffset: "10000",
 		SelectorConfig: &payeer.PayeerPriceSelectorConfig{
@@ -30,6 +35,8 @@ func main() {
 			MaxWmaSurplus:          decimal.RequireFromString(".005"),
 			WmaTake:                15,
 		},
+		BuyEnabled:  true,
+		SellEnabled: true,
 	})
 	strategy.Run()
 }

@@ -58,3 +58,16 @@ type OrderBookTickerWsResponse struct {
 	Status int    `json:"status"`
 	Result []OrderBookTickerResult
 }
+
+// Streams
+
+// Individual Symbol Book Ticker Streams
+//
+// Stream Name: <symbol>@bookTicker
+type OrderBookTickerStreamResult struct {
+	Symbol      Symbol `json:"s"`
+	BidPrice    string `json:"b"`
+	BidQuantity string `json:"B"`
+	AskPrice    string `json:"a"`
+	AskQuantity string `json:"A"`
+}
