@@ -18,6 +18,7 @@ type PayeerPriceSelectorConfig struct {
 	ElevationPriceFraction decimal.Decimal
 	MaxWmaSurplus          decimal.Decimal
 	WmaTake                int
+	WmaTakeAmount          decimal.Decimal
 }
 
 type PayeerPriceSelector struct {
@@ -155,13 +156,14 @@ func (ps *PayeerPriceSelector) getWeightedMeanAverage(orders []OrdersOrder) deci
 	totalValue := decimal.NewFromInt(0)
 	totalAmount := decimal.NewFromInt(0)
 	for i, order := range orders {
-		if i == ps.config.WmaTake {
-			break
-		}
 		value, _ := decimal.NewFromString(order.Value)
 		amount, _ := decimal.NewFromString(order.Amount)
 		totalValue = totalValue.Add(value)
 		totalAmount = totalAmount.Add(amount)
+		if (ps.config.WmaTake > 0 && i == ps.config.WmaTake) &&
+			(ps.config.WmaTakeAmount.IsPositive() && totalAmount.GreaterThan(ps.config.WmaTakeAmount)) {
+			break
+		}
 	}
 	return totalValue.Div(totalAmount)
 }
