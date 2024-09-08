@@ -44,6 +44,7 @@ type store struct {
 	minWeights         *msync.Mu[int]
 	weightsTimestamp   *msync.Mu[time.Time]
 	binanceTickers     *msync.MuMap[binance.Symbol, binance.OrderBookTickerStreamResult]
+	wait               *msync.MuMap[payeer.Pair, bool]
 }
 
 type ValueOffsetStrategy struct {
@@ -98,6 +99,7 @@ func NewVolumeOffsetStrategy(
 			minWeights:         msync.NewMu(600),
 			weightsTimestamp:   msync.NewMu(time.Now()),
 			binanceTickers:     binanceTickers,
+			wait:               msync.NewMuMap[payeer.Pair, bool](),
 		},
 		selector: payeer.NewPayeerPriceSelector(options.SelectorConfig),
 	}
@@ -121,6 +123,11 @@ func (s *ValueOffsetStrategy) Run() {
 func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.Pair) {
 	for {
 		time.Sleep(time.Millisecond * 500)
+		if shouldWait, ok := s.wait.Get(pair); ok {
+			if shouldWait {
+				continue
+			}
+		}
 		skip := false
 		s.orders.Range(func(key int, value payeer.OrderParams) bool {
 			if value.Action == action {
@@ -191,6 +198,10 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 			}
 			if violatesRatio {
 				orderIds = append(orderIds, key)
+				s.wait.Set(pair, true)
+				time.AfterFunc(time.Minute, func() {
+					s.wait.Delete(pair)
+				})
 				return true
 			}
 			return true
