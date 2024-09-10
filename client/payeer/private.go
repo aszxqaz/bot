@@ -3,52 +3,7 @@ package payeer
 import (
 	"automata/signer"
 	"errors"
-	"strings"
-
-	fastshot "github.com/opus-domini/fast-shot"
-	"github.com/opus-domini/fast-shot/constant/mime"
 )
-
-const (
-	baseUrl = "https://payeer.com/api/trade"
-)
-
-type Config struct {
-	ApiId  string
-	Secret string
-}
-
-type Client struct {
-	config     *Config
-	httpClient fastshot.ClientHttpMethods
-}
-
-func NewClient(config *Config) *Client {
-	httpClient := setupHttpClient(config.ApiId)
-	return &Client{
-		config:     config,
-		httpClient: httpClient,
-	}
-}
-
-func (p *Client) Info() (*InfoResponse, error) {
-	fastResp, err := p.httpClient.
-		GET("/info").
-		Send()
-	if err != nil {
-		return nil, err
-	}
-	if fastResp.Status().IsError() {
-		body, _ := fastResp.Body().AsString()
-		return nil, errors.New(body)
-	}
-	var data InfoResponse
-	err = fastResp.Body().AsJSON(&data)
-	if err != nil {
-		return nil, err
-	}
-	return &data, err
-}
 
 // Request Weight: 5 (10 for a market order)
 func (p *Client) PlaceOrder(req *PostOrderRequest) (*PostOrderResponse, error) {
@@ -149,10 +104,15 @@ func (p *Client) CancelOrder(req *CancelOrderRequest) (*CancelOrderResponse, err
 	return &data, nil
 }
 
-// Request Weight: 1 * count of pairs
-func (p *Client) Orders(pairs []Pair) (*OrdersResponse, error) {
-	req := &OrdersRequest{Pairs: joinPairs(pairs)}
-	fastResp, err := p.httpClient.GET("/orders").Body().AsJSON(req).Send()
+// Request Weight: 60
+func (p *Client) MyOrders(req *MyOrdersRequest) (*MyOrdersResponse, error) {
+	req.Timestamp = getTimestamp()
+	body := mustMarshalJson(req)
+	sign := p.signBody("my_orders", body)
+	fastResp, err := p.httpClient.POST("/my_orders").
+		Header().Add("API-SIGN", string(sign)).
+		Body().AsString(string(body)).
+		Send()
 	if err != nil {
 		return nil, err
 	}
@@ -160,52 +120,23 @@ func (p *Client) Orders(pairs []Pair) (*OrdersResponse, error) {
 		body, _ := fastResp.Body().AsString()
 		return nil, errors.New(body)
 	}
-	var data OrdersResponse
-	err = fastResp.Body().AsJSON(&data)
+	var empty MyOrdersEmptyResponse
+	err = fastResp.Body().AsJSON(&empty)
 	if err != nil {
-		return nil, err
+		var data MyOrdersResponse
+		err = fastResp.Body().AsJSON(&data)
+		if err != nil {
+			return nil, err
+		}
+		return &data, nil
 	}
-	return &data, nil
-}
-
-// Request Weight: 1
-func (p *Client) Tickers(pairs []Pair) (*TickersResponse, error) {
-	req := &TickersRequest{Pairs: joinPairs(pairs)}
-	fastResp, err := p.httpClient.GET("/ticker").Body().AsJSON(req).Send()
-	if err != nil {
-		return nil, err
-	}
-	if fastResp.Status().IsError() {
-		body, _ := fastResp.Body().AsString()
-		return nil, errors.New(body)
-	}
-	var data TickersResponse
-	err = fastResp.Body().AsJSON(&data)
-	if err != nil {
-		return nil, err
-	}
-	return &data, nil
+	return &MyOrdersResponse{
+		BaseResponse: BaseResponse{Success: true},
+		Orders:       make(map[string]MyOrdersOrder),
+	}, nil
 }
 
 func (p *Client) signBody(method string, body []byte) string {
 	payload := append([]byte(method), body...)
 	return signer.Sign(payload, []byte(p.config.Secret))
-}
-
-func setupHttpClient(apiId string) fastshot.ClientHttpMethods {
-	return fastshot.NewClient(baseUrl).
-		Header().Add("API-ID", apiId).
-		Header().AddAccept(mime.JSON).
-		Build()
-}
-
-func joinPairs(pairs []Pair) string {
-	joined := strings.Builder{}
-	for i, pair := range pairs {
-		joined.WriteString(string(pair))
-		if i != len(pairs)-1 {
-			joined.WriteString(",")
-		}
-	}
-	return joined.String()
 }

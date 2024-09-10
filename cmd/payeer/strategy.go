@@ -6,14 +6,15 @@ import (
 	"automata/msync"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/shopspring/decimal"
 )
 
 type ValueOffsetStrategyOptions struct {
-	MaxPriceRatio string
 	// PlacementValueOffset   string
+	MaxPriceRatio          string
 	ReplacementValueOffset string
 	SelectorConfig         *payeer.PayeerPriceSelectorConfig
 	Pairs                  map[payeer.Pair]binance.Symbol
@@ -42,6 +43,8 @@ type store struct {
 	weightsTimestamp   *msync.Mu[time.Time]
 	binanceTickers     *msync.MuMap[binance.Symbol, binance.OrderBookTickerStreamResult]
 	wait               *msync.MuMap[payeer.Pair, bool]
+	balance            *msync.MuMap[string, payeer.Balance]
+	info               *payeer.InfoResponse
 }
 
 type ValueOffsetStrategy struct {
@@ -97,12 +100,16 @@ func NewVolumeOffsetStrategy(
 			weightsTimestamp:   msync.NewMu(time.Now()),
 			binanceTickers:     binanceTickers,
 			wait:               msync.NewMuMap[payeer.Pair, bool](),
+			balance:            msync.NewMuMap[string, payeer.Balance](),
 		},
 		selector: payeer.NewPayeerPriceSelector(options.SelectorConfig),
 	}
 }
 
 func (s *ValueOffsetStrategy) Run() {
+	s.cancelInitialOrders()
+	s.resetBalance()
+	s.resetInfo()
 	for pair := range s.options.Pairs {
 		if s.options.BuyEnabled {
 			go s.PlaceOrderLoop(payeer.ACTION_BUY, pair)
@@ -112,9 +119,21 @@ func (s *ValueOffsetStrategy) Run() {
 		}
 		if s.options.SellEnabled || s.options.BuyEnabled {
 			go s.CheckAndCancelLoop(pair)
+			go s.OrdersUpdateLoop()
 		}
 	}
 	select {}
+}
+
+func (s *ValueOffsetStrategy) OrdersUpdateLoop() {
+	for {
+		time.Sleep(time.Second * 5)
+		s.orders.Range(func(orderId int, details payeer.OrderParams) bool {
+			order := s.fetchOrderDetails(orderId)
+			slog.Info("[ValueOffsetStrategy] order details", "order", *order)
+			return true
+		})
+	}
 }
 
 func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.Pair) {
@@ -140,9 +159,28 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 		orders := s.fetchPayeerOrders(pair)
 		ok, price := s.selector.SelectPrice(action, &orders)
 		if ok {
-			if action == payeer.ACTION_SELL {
-				baseAssetAvailable := decimal.NewFromFloat(s.fetchPayeerBalance()[pair.Base()].Available)
-				if baseAssetAvailable.LessThan(s.options.Amount) {
+			if action == payeer.ACTION_BUY {
+				quote, ok := s.balance.Get(pair.Quote())
+				if !ok {
+					slog.Warn("[ValueOffsetStrategy] no balance found for", "quote", pair.Quote())
+					continue
+				}
+				available := decimal.NewFromFloat(quote.Available)
+				required := price.Mul(s.options.Amount)
+				if available.LessThan(required) {
+					slog.Warn("[ValueOffsetStrategy] not enough quote", "action", action, "quote", pair.Quote(), "required", required.StringFixed(2), "available", available.StringFixed(2))
+					continue
+				}
+			} else {
+				base, ok := s.balance.Get(pair.Base())
+				if !ok {
+					slog.Warn("[ValueOffsetStrategy] no balance found for", "base", pair.Base())
+					continue
+				}
+				available := decimal.NewFromFloat(base.Available)
+				required := s.options.Amount
+				if available.LessThan(required) {
+					slog.Warn("[ValueOffsetStrategy] not enough base", "action", action, "base", pair.Base(), "required", required.StringFixed(2), "available", available.StringFixed(2))
 					continue
 				}
 			}
@@ -162,6 +200,7 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 				binancePrice: binancePrice,
 				action:       action,
 			})
+			s.resetBalance()
 		}
 	}
 }
@@ -178,7 +217,7 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 		}
 		time.Sleep(500 * time.Millisecond)
 		orders := s.fetchPayeerOrders(pair)
-		orderIds := []int{}
+		priceChangedOrderIds := []int{}
 		s.binancePricePlaced.Range(func(key int, data placedMetadata) bool {
 			t, ok := s.times.Get(key)
 			if !ok {
@@ -196,7 +235,7 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 				violatesRatio = data.binancePrice.Div(binanceBidPrice).GreaterThan(s.maxPriceRatio)
 			}
 			if violatesRatio {
-				orderIds = append(orderIds, key)
+				priceChangedOrderIds = append(priceChangedOrderIds, key)
 				s.wait.Set(pair, true)
 				time.AfterFunc(time.Minute, func() {
 					s.wait.Delete(pair)
@@ -205,8 +244,8 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 			}
 			return true
 		})
-		s.cancelOrders(orderIds)
-		orderIds = []int{}
+		s.cancelOrders(priceChangedOrderIds)
+		valueOffsetChangedOrderIds := []int{}
 		s.orders.Range(func(key int, value payeer.OrderParams) bool {
 			t, ok := s.times.Get(key)
 			if !ok {
@@ -220,13 +259,65 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 				panic(err)
 			}
 			if s.getTopValueOffset(price, orders, value.Action).GreaterThan(s.replacementValueOffset) {
-				orderIds = append(orderIds, key)
+				valueOffsetChangedOrderIds = append(valueOffsetChangedOrderIds, key)
 				return true
 			}
 			return true
 		})
-		s.cancelOrders(orderIds)
+		s.cancelOrders(valueOffsetChangedOrderIds)
+		if len(priceChangedOrderIds) > 0 || len(valueOffsetChangedOrderIds) > 0 {
+			s.resetBalance()
+		}
 	}
+}
+
+func (s *ValueOffsetStrategy) cancelInitialOrders() {
+	orders := s.fetchMyOrders()
+	slog.Info("[ValueOffsetStrategy] Cancelling pending orders...")
+	for _, order := range orders {
+		orderTime := time.Unix(order.Date, 0)
+		diff := time.Since(orderTime)
+		if diff.Minutes() <= 1 {
+			wait := time.Minute - diff
+			slog.Info("[ValueOffsetStrategy] Init should wait for order cancel", "orderId", order.Id, "time", wait)
+			time.Sleep(wait)
+		}
+		orderId, _ := strconv.Atoi(order.Id)
+		s.cancelOrder(orderId)
+	}
+}
+
+func (s *ValueOffsetStrategy) resetBalance() {
+	slog.Info("[ValueOffsetStrategy] Fetching balances...")
+	for currency, balance := range s.fetchBalance() {
+		if balance.Available > 0 {
+			s.balance.Set(currency, balance)
+		}
+	}
+}
+
+func (s *ValueOffsetStrategy) resetInfo() {
+	info, err := s.payeerClient.Info()
+	if err != nil {
+		panic(err)
+	}
+	if !info.Success {
+		slog.Error("[ValueOffsetStrategy] Info response error", "error", info.Error)
+		os.Exit(1)
+	}
+	s.info = info
+}
+
+func (s *ValueOffsetStrategy) fetchMyOrders() map[string]payeer.MyOrdersOrder {
+	orders, err := s.payeerClient.MyOrders(&payeer.MyOrdersRequest{})
+	if err != nil {
+		panic(err)
+	}
+	if !orders.Success {
+		slog.Error("[ValueOffsetStrategy] MyOrders response error", "error", orders.Error)
+		os.Exit(1)
+	}
+	return orders.Orders
 }
 
 func (s *ValueOffsetStrategy) fetchOrderDetails(orderId int) *payeer.OrderDetails {
@@ -254,12 +345,12 @@ func (s *ValueOffsetStrategy) placeOrder(action payeer.Action, amount string, pr
 	}
 	s.updateWeights(5)
 	if !rsp.Success {
-		slog.Error("[ValueOffsetStrategy] Place order response error", "error", rsp.Error)
+		slog.Error("[ValueOffsetStrategy] Place order response error", "response", rsp)
 		os.Exit(1)
 	}
 	s.times.Set(rsp.OrderId, time.Now())
 	s.orders.Set(rsp.OrderId, rsp.Params)
-	slog.Info("Order placed:", "order", rsp)
+	slog.Info("[ValueOffsetStrategy] Order placed:", "order", rsp)
 	return rsp
 }
 
@@ -285,10 +376,10 @@ func (s *ValueOffsetStrategy) cancelOrder(orderId int) *payeer.CancelOrderRespon
 			s.binancePricePlaced.Delete(orderId)
 			return rsp
 		}
-		slog.Error("[ValueOffsetStrategy] Order status response error", "error", rsp.Error)
+		slog.Error("[ValueOffsetStrategy] Cancel order error", "error", rsp.Error)
 		os.Exit(1)
 	}
-	slog.Info("Order canceled", "orderId", orderId)
+	slog.Info("[ValueOffsetStrategy] Order canceled", "orderId", orderId)
 	s.times.Delete(orderId)
 	s.orders.Delete(orderId)
 	s.binancePricePlaced.Delete(orderId)
@@ -351,7 +442,7 @@ func (s *ValueOffsetStrategy) getTopValueOffset(price decimal.Decimal, orders pa
 // 	return selectedPrice
 // }
 
-func (s *ValueOffsetStrategy) fetchPayeerBalance() map[string]payeer.Balance {
+func (s *ValueOffsetStrategy) fetchBalance() map[string]payeer.Balance {
 	balance, err := s.payeerClient.Balance()
 	if err != nil {
 		panic(err)
@@ -423,5 +514,41 @@ func (s *ValueOffsetStrategy) updateWeights(count int) {
 // 		}
 // 		time.Sleep(time.Millisecond * 10)
 // 		slog.Info("Waiting for weights to reach", "count", count)
+// 	}
+// }
+
+// if action == payeer.ACTION_SELL {
+// 	balance, ok := s.balance.Get(pair.Quote())
+// 	if !ok {
+// 		slog.Warn("[ValueOffsetStrategy] no balance found for", "quote", pair.Quote())
+// 		continue
+// 	}
+// 	fee := decimal.
+// 		NewFromFloat(s.info.Pairs[pair].FeeTakerPercent).
+// 		Div(decimal.NewFromInt(100)).
+// 		Add(decimal.NewFromInt(1)).
+// 		Mul(s.options.Amount).
+// 		Mul(price)
+// 	total := s.options.Amount.Mul(price).Add(fee)
+// 	if ok && decimal.NewFromFloat(balance.Available).LessThan(total) {
+// 		slog.Warn("[ValueOffsetStrategy] insufficient funds", "quote", pair.Quote(), "available", balance.Available, "required", total.String())
+// 		continue
+// 	}
+// }
+// if action == payeer.ACTION_BUY {
+// quoteBalance, ok := s.balance.Get(pair.Quote())
+// if !ok {
+// 	slog.Warn("[ValueOffsetStrategy] no balance found for", "quote", pair.Quote())
+// 	continue
+// }
+// 	fee := decimal.
+// 		NewFromFloat(s.info.Pairs[pair].FeeTakerPercent).
+// 		Div(decimal.NewFromInt(100)).
+// 		Add(decimal.NewFromInt(1)).
+// 		Mul(s.options.Amount)
+// 	required := s.options.Amount.Add(fee).Mul(price)
+// 	if decimal.NewFromFloat(quoteBalance.Available).LessThan(required) {
+// 		slog.Warn("[ValueOffsetStrategy] insufficient funds", "quote", pair.Quote(), "available", quoteBalance.Available, "required", required.String())
+// 		continue
 // 	}
 // }

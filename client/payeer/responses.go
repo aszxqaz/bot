@@ -46,7 +46,7 @@ type Limits struct {
 type PairInfo struct {
 	PricePrecision  int     `json:"price_prec"`
 	AmountPrecision int     `json:"amount_prec"`
-	ValuePrecition  int     `json:"value_prec"`
+	ValuePrecision  int     `json:"value_prec"`
 	MinPrice        string  `json:"min_price"`
 	MaxPrice        string  `json:"max_price"`
 	MinAmount       float64 `json:"min_amount"`
@@ -56,9 +56,9 @@ type PairInfo struct {
 }
 
 type InfoResponse struct {
-	Success bool   `json:"success"`
-	Limits  Limits `json:"limits"`
-	Pairs   map[Pair]PairInfo
+	BaseResponse
+	Limits Limits `json:"limits"`
+	Pairs  map[Pair]PairInfo
 }
 
 // Balance [/account]
@@ -199,4 +199,38 @@ type Ticker struct {
 type TickersResponse struct {
 	BaseResponse
 	Pairs map[Pair]Ticker `json:"pairs"`
+}
+
+// My orders [/my_orders]
+type MyOrdersRequest struct {
+	Pairs     string `json:"pair,omitempty"`
+	Action    Action `json:"action,omitempty"`
+	Timestamp int64  `json:"ts"`
+}
+
+type MyOrdersEmptyResponse struct {
+	BaseResponse
+	EmptyList []int `json:"items"`
+}
+
+type MyOrdersResponse struct {
+	BaseResponse
+	Orders map[string]MyOrdersOrder `json:"items"`
+}
+
+type MyOrdersOrder struct {
+	Id              string    `json:"id"`
+	Date            int64     `json:"date"`
+	Pair            Pair      `json:"pair"`
+	Action          Action    `json:"action"`
+	Type            OrderType `json:"type"`
+	Amount          string    `json:"amount"`
+	Price           string    `json:"price"`
+	StopPrice       string    `json:"stop_price"`
+	Value           string    `json:"value"`
+	AmountProcessed string    `json:"amount_processed"`
+	AmountRemaining string    `json:"amount_remaining"`
+	ValueProcessed  string    `json:"value_processed"`
+	ValueRemaining  string    `json:"value_remaining"`
+	IsCreatedByApi  bool      `json:"api"`
 }
