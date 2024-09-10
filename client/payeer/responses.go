@@ -234,3 +234,22 @@ type MyOrdersOrder struct {
 	ValueRemaining  string    `json:"value_remaining"`
 	IsCreatedByApi  bool      `json:"api"`
 }
+
+// Trades [/trades]
+type TradesRequest struct {
+	Pairs string `json:"pair"`
+}
+
+type TradesTrade struct {
+	Id     string    `json:"id"`
+	Date   int64     `json:"date"`
+	Type   OrderType `json:"type"`
+	Amount string    `json:"amount"`
+	Price  string    `json:"price"`
+	Value  string    `json:"value"`
+}
+
+type TradesResponse struct {
+	BaseResponse
+	Trades map[Pair][]TradesTrade `json:"pairs"`
+}
