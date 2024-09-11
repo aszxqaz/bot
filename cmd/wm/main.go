@@ -29,8 +29,8 @@ func main() {
 	// })
 
 	// _, buyPrice := selector.SelectPrice(payeer.ACTION_BUY, &orders)
-	// fmt.Println("bids", printOrdersWithHeroPrice(orders.Bids, true, buyPrice.StringFixed(2)))
+	// fmt.Println("bids", printOrdersWithHeroPrice(orders.Bids, true, buyPrice.String()))
 
 	// _, sellPrice := selector.SelectPrice(payeer.ACTION_SELL, &orders)
-	// fmt.Println("asks", printOrdersWithHeroPrice(orders.Asks, false, sellPrice.StringFixed(2)))
+	// fmt.Println("asks", printOrdersWithHeroPrice(orders.Asks, false, sellPrice.String()))
 }

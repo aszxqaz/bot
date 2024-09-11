@@ -23,18 +23,22 @@ func main() {
 
 	strategy := NewVolumeOffsetStrategy(payeerClient, binanceClient, &ValueOffsetStrategyOptions{
 		Pairs: map[payeer.Pair]binance.Symbol{
-			payeer.PAIR_BTCRUB: binance.SYMBOL_BTCUSDT,
+			payeer.PAIR_BTCUSDT: binance.SYMBOL_BTCUSDT,
 		},
-		BinanceTickerInterval: time.Millisecond * 500,
+		BinanceTickerInterval: time.Millisecond * 100,
 		MaxPriceRatio:         "1.001",
 		// PlacementValueOffset:   "1000",
 		ReplacementValueOffset: "10000",
 		SelectorConfig: &payeer.PayeerPriceSelectorConfig{
-			PlacementValueOffset:   decimal.NewFromInt(5000),
+			PlacementValueOffset:   decimal.NewFromInt(100),
 			ElevationPriceFraction: decimal.RequireFromString(".00005"),
 			MaxWmaSurplus:          decimal.RequireFromString(".003"),
 			WmaTakeAmount:          decimal.RequireFromString(".025"),
 			WmaTake:                0,
+
+			Symbol:                  binance.SYMBOL_BTCUSDT,
+			BidMaxBinancePriceRatio: decimal.RequireFromString(".9999"),
+			AskMinBinancePriceRatio: decimal.RequireFromString("1.0001"),
 		},
 		BuyEnabled:  true,
 		SellEnabled: true,

@@ -65,10 +65,6 @@ func NewVolumeOffsetStrategy(
 	if err != nil {
 		panic(err)
 	}
-	// valueOffset, err := decimal.NewFromString(options.PlacementValueOffset)
-	// if err != nil {
-	// 	panic(err)
-	// }
 	replacementValueOffset, err := decimal.NewFromString(options.ReplacementValueOffset)
 	if err != nil {
 		panic(err)
@@ -102,7 +98,10 @@ func NewVolumeOffsetStrategy(
 			wait:               msync.NewMuMap[payeer.Pair, bool](),
 			balance:            msync.NewMuMap[string, payeer.Balance](),
 		},
-		selector: payeer.NewPayeerPriceSelector(options.SelectorConfig),
+		selector: payeer.NewPayeerPriceSelector(
+			options.SelectorConfig,
+			binanceTickers,
+		),
 	}
 }
 
@@ -168,7 +167,7 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 				available := decimal.NewFromFloat(quote.Available)
 				required := price.Mul(s.options.Amount)
 				if available.LessThan(required) {
-					slog.Warn("[ValueOffsetStrategy] not enough quote", "action", action, "quote", pair.Quote(), "required", required.StringFixed(2), "available", available.StringFixed(2))
+					slog.Warn("[ValueOffsetStrategy] not enough quote", "action", action, "quote", pair.Quote(), "required", required.String(), "available", available.String())
 					continue
 				}
 			} else {
@@ -180,7 +179,7 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 				available := decimal.NewFromFloat(base.Available)
 				required := s.options.Amount
 				if available.LessThan(required) {
-					slog.Warn("[ValueOffsetStrategy] not enough base", "action", action, "base", pair.Base(), "required", required.StringFixed(2), "available", available.StringFixed(2))
+					slog.Warn("[ValueOffsetStrategy] not enough base", "action", action, "base", pair.Base(), "required", required.String(), "available", available.String())
 					continue
 				}
 			}
@@ -218,34 +217,34 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 		time.Sleep(500 * time.Millisecond)
 		orders := s.fetchPayeerOrders(pair)
 		priceChangedOrderIds := []int{}
-		s.binancePricePlaced.Range(func(key int, data placedMetadata) bool {
-			t, ok := s.times.Get(key)
-			if !ok {
-				panic("order time not found")
-			}
-			if time.Since(t).Minutes() < 1 {
-				return true
-			}
-			var violatesRatio bool
-			if data.action == payeer.ACTION_SELL {
-				binanceAskPrice := decimal.RequireFromString(binancePrices.AskPrice)
-				violatesRatio = binanceAskPrice.Div(data.binancePrice).GreaterThan(s.maxPriceRatio)
-			} else {
-				binanceBidPrice := decimal.RequireFromString(binancePrices.BidPrice)
-				violatesRatio = data.binancePrice.Div(binanceBidPrice).GreaterThan(s.maxPriceRatio)
-			}
-			if violatesRatio {
-				priceChangedOrderIds = append(priceChangedOrderIds, key)
-				s.wait.Set(pair, true)
-				time.AfterFunc(time.Minute, func() {
-					s.wait.Delete(pair)
-				})
-				return true
-			}
-			return true
-		})
-		s.cancelOrders(priceChangedOrderIds)
-		valueOffsetChangedOrderIds := []int{}
+		// s.binancePricePlaced.Range(func(key int, data placedMetadata) bool {
+		// 	t, ok := s.times.Get(key)
+		// 	if !ok {
+		// 		panic("order time not found")
+		// 	}
+		// 	if time.Since(t).Minutes() < 1 {
+		// 		return true
+		// 	}
+		// 	var violatesRatio bool
+		// 	if data.action == payeer.ACTION_SELL {
+		// 		binanceAskPrice := decimal.RequireFromString(binancePrices.AskPrice)
+		// 		violatesRatio = binanceAskPrice.Div(data.binancePrice).GreaterThan(s.maxPriceRatio)
+		// 	} else {
+		// 		binanceBidPrice := decimal.RequireFromString(binancePrices.BidPrice)
+		// 		violatesRatio = data.binancePrice.Div(binanceBidPrice).GreaterThan(s.maxPriceRatio)
+		// 	}
+		// 	if violatesRatio {
+		// 		priceChangedOrderIds = append(priceChangedOrderIds, key)
+		// 		s.wait.Set(pair, true)
+		// 		time.AfterFunc(time.Minute, func() {
+		// 			s.wait.Delete(pair)
+		// 		})
+		// 		return true
+		// 	}
+		// 	return true
+		// })
+		// s.cancelOrders(priceChangedOrderIds)
+		cancelableOrderIds := []int{}
 		s.orders.Range(func(key int, value payeer.OrderParams) bool {
 			t, ok := s.times.Get(key)
 			if !ok {
@@ -258,14 +257,34 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 			if err != nil {
 				panic(err)
 			}
+			// cancel by value offset
 			if s.getTopValueOffset(price, orders, value.Action).GreaterThan(s.replacementValueOffset) {
-				valueOffsetChangedOrderIds = append(valueOffsetChangedOrderIds, key)
+				slog.Info("[ValueOffsetStrategy] order should be replaced due to top value offset", "orderId", key)
+				cancelableOrderIds = append(cancelableOrderIds, key)
 				return true
+			}
+			// cancel by binance price
+			if value.Action == payeer.ACTION_BUY {
+				binPrice := decimal.RequireFromString(binancePrices.BidPrice)
+				ok := price.Div(binPrice).LessThan(s.selector.Config.BidMaxBinancePriceRatio)
+				if !ok {
+					slog.Info("[PayeerPriceSelector] canceled by binance price", "orderId", key, "action", value.Action, "ok", ok, "binance bid price", binPrice.String(), "price", price.String())
+					cancelableOrderIds = append(cancelableOrderIds, key)
+					return true
+				}
+			} else {
+				binPrice := decimal.RequireFromString(binancePrices.AskPrice)
+				ok := price.Div(binPrice).GreaterThan(s.selector.Config.AskMinBinancePriceRatio)
+				if !ok {
+					slog.Info("[PayeerPriceSelector] canceled by binance price", "orderId", key, "action", value.Action, "ok", ok, "binance ask price", binPrice.String(), "price", price.String())
+					cancelableOrderIds = append(cancelableOrderIds, key)
+					return true
+				}
 			}
 			return true
 		})
-		s.cancelOrders(valueOffsetChangedOrderIds)
-		if len(priceChangedOrderIds) > 0 || len(valueOffsetChangedOrderIds) > 0 {
+		s.cancelOrders(cancelableOrderIds)
+		if len(priceChangedOrderIds) > 0 || len(cancelableOrderIds) > 0 {
 			s.resetBalance()
 		}
 	}

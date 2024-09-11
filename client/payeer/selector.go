@@ -1,6 +1,8 @@
 package payeer
 
 import (
+	"automata/client/binance"
+	"automata/msync"
 	"log/slog"
 
 	"github.com/shopspring/decimal"
@@ -9,39 +11,69 @@ import (
 var cent = decimal.RequireFromString(".01")
 
 type PayeerPriceSelectorContext struct {
-	info   *PairsOrderInfo
-	action Action
+	info           *PairsOrderInfo
+	action         Action
+	binanceTickers *msync.MuMap[binance.Symbol, binance.OrderBookTickerStreamResult]
 }
 
 type PayeerPriceSelectorConfig struct {
-	PlacementValueOffset   decimal.Decimal
-	ElevationPriceFraction decimal.Decimal
-	MaxWmaSurplus          decimal.Decimal
-	WmaTake                int
-	WmaTakeAmount          decimal.Decimal
+	PlacementValueOffset    decimal.Decimal
+	Symbol                  binance.Symbol
+	ElevationPriceFraction  decimal.Decimal
+	MaxWmaSurplus           decimal.Decimal
+	WmaTake                 int
+	WmaTakeAmount           decimal.Decimal
+	BidMaxBinancePriceRatio decimal.Decimal
+	AskMinBinancePriceRatio decimal.Decimal
 }
 
 type PayeerPriceSelector struct {
-	config *PayeerPriceSelectorConfig
+	Config         *PayeerPriceSelectorConfig
+	binanceTickers *msync.MuMap[binance.Symbol, binance.OrderBookTickerStreamResult]
 }
 
-func NewPayeerPriceSelector(config *PayeerPriceSelectorConfig) *PayeerPriceSelector {
+func NewPayeerPriceSelector(
+	config *PayeerPriceSelectorConfig,
+	binanceTickers *msync.MuMap[binance.Symbol, binance.OrderBookTickerStreamResult],
+) *PayeerPriceSelector {
 	return &PayeerPriceSelector{
-		config: config,
+		Config:         config,
+		binanceTickers: binanceTickers,
 	}
 }
 
 func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) (bool, decimal.Decimal) {
 	pctx := &PayeerPriceSelectorContext{
-		info:   info,
-		action: action,
+		info:           info,
+		action:         action,
+		binanceTickers: ps.binanceTickers,
 	}
 	return ps.pipe(
 		pctx,
 		ps.selectByValueOffset,
 		ps.selectByElevation,
-		ps.filterByWmaRatio,
+		// ps.filterByWmaRatio,
+		ps.filterByBinancePrice,
 	)
+}
+
+func (ps *PayeerPriceSelector) filterByBinancePrice(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
+	binancePrice, ok := pctx.binanceTickers.Get(ps.Config.Symbol)
+	if !ok {
+		slog.Error("[PayeerPriceSelector] binance price not found", "symbol", ps.Config.Symbol)
+		return false, prevPrice
+	}
+	if pctx.action == ACTION_BUY {
+		binPrice := decimal.RequireFromString(binancePrice.BidPrice)
+		ok := prevPrice.Div(binPrice).LessThan(ps.Config.BidMaxBinancePriceRatio)
+		slog.Info("[PayeerPriceSelector] filter by binance price", "action", pctx.action, "ok", ok, "binance bid price", binPrice.String(), "price", prevPrice.String())
+		return ok, prevPrice
+	} else {
+		binPrice := decimal.RequireFromString(binancePrice.AskPrice)
+		ok := prevPrice.Div(binPrice).GreaterThan(ps.Config.AskMinBinancePriceRatio)
+		slog.Info("[PayeerPriceSelector] filter by binance price", "action", pctx.action, "ok", ok, "binance ask price", binPrice.String(), "price", prevPrice.String())
+		return ok, prevPrice
+	}
 }
 
 func (ps *PayeerPriceSelector) filterByWmaRatio(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
@@ -50,18 +82,18 @@ func (ps *PayeerPriceSelector) filterByWmaRatio(pctx *PayeerPriceSelectorContext
 	isOk := false
 	var wmaVal decimal.Decimal
 	if pctx.action == ACTION_SELL {
-		wmaVal = decimal.NewFromInt(1).Sub(ps.config.MaxWmaSurplus).Mul(wma)
+		wmaVal = decimal.NewFromInt(1).Sub(ps.Config.MaxWmaSurplus).Mul(wma)
 		isOk = prevPrice.GreaterThan(wmaVal)
 	} else {
-		wmaVal = decimal.NewFromInt(1).Add(ps.config.MaxWmaSurplus).Mul(wma)
+		wmaVal = decimal.NewFromInt(1).Add(ps.Config.MaxWmaSurplus).Mul(wma)
 		isOk = prevPrice.LessThan(wmaVal)
 	}
-	slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "action", pctx.action, "price", prevPrice.String(), "wma", wma.StringFixed(2), "wma surplus", ps.config.MaxWmaSurplus.StringFixed(6), "wma adjusted", wmaVal.StringFixed(2))
+	slog.Info("[PayeerPriceSelector] filtered by wma ratio", "ok", isOk, "action", pctx.action, "price", prevPrice.String(), "wma", wma.String(), "wma surplus", ps.Config.MaxWmaSurplus.StringFixed(6), "wma adjusted", wmaVal.String())
 	return isOk, prevPrice
 }
 
 func (ps *PayeerPriceSelector) selectByElevation(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
-	fractionAbs := ps.config.ElevationPriceFraction.Mul(prevPrice)
+	fractionAbs := ps.Config.ElevationPriceFraction.Mul(prevPrice)
 	orders := ps.resolveOrders(pctx)
 	prevPriceIndex := 0
 	for i, order := range orders {
@@ -90,7 +122,7 @@ func (ps *PayeerPriceSelector) selectByElevation(pctx *PayeerPriceSelectorContex
 			}
 		}
 	}
-	slog.Info("[PayeerPriceSelector] selected by elevation", "price", afterPrice.StringFixed(2), "fractionAbs", fractionAbs.StringFixed(2), "elevation", afterPrice.Sub(prevPrice).Abs())
+	slog.Info("[PayeerPriceSelector] selected by elevation", "price", afterPrice.String(), "fractionAbs", fractionAbs.String(), "elevation", afterPrice.Sub(prevPrice).Abs())
 	return true, afterPrice
 }
 
@@ -101,7 +133,7 @@ func (ps *PayeerPriceSelector) selectByValueOffset(pctx *PayeerPriceSelectorCont
 	for _, order := range orders {
 		value, _ := decimal.NewFromString(order.Value)
 		acc = acc.Add(value)
-		if acc.GreaterThanOrEqual(ps.config.PlacementValueOffset) {
+		if acc.GreaterThanOrEqual(ps.Config.PlacementValueOffset) {
 			price, err := decimal.NewFromString(order.Price)
 			if err != nil {
 				panic(err)
@@ -110,7 +142,7 @@ func (ps *PayeerPriceSelector) selectByValueOffset(pctx *PayeerPriceSelectorCont
 			break
 		}
 	}
-	slog.Info("[PayeerPriceSelector] selected by value offset", "price", selectedPrice.StringFixed(2))
+	slog.Info("[PayeerPriceSelector] selected by value offset", "price", selectedPrice.String())
 	return true, selectedPrice
 }
 
@@ -155,8 +187,8 @@ func (ps *PayeerPriceSelector) getWeightedMeanAverage(orders []OrdersOrder) deci
 		amount, _ := decimal.NewFromString(order.Amount)
 		totalValue = totalValue.Add(value)
 		totalAmount = totalAmount.Add(amount)
-		if (ps.config.WmaTake > 0 && i == ps.config.WmaTake) ||
-			(ps.config.WmaTakeAmount.IsPositive() && totalAmount.GreaterThan(ps.config.WmaTakeAmount)) {
+		if (ps.Config.WmaTake > 0 && i == ps.Config.WmaTake) ||
+			(ps.Config.WmaTakeAmount.IsPositive() && totalAmount.GreaterThan(ps.Config.WmaTakeAmount)) {
 			break
 		}
 	}
