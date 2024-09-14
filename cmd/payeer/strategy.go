@@ -127,6 +127,7 @@ func (s *ValueOffsetStrategy) Run() {
 func (s *ValueOffsetStrategy) OrdersUpdateLoop() {
 	for {
 		time.Sleep(time.Second * 5)
+		slog.Info("[ValueOffsetStrategy] checking orders inner list", "orderIds", s.orders.Keys())
 		orderIdsToDelete := []int{}
 		s.orders.Range(func(orderId int, details payeer.OrderParams) bool {
 			order := s.fetchOrderDetails(orderId)
