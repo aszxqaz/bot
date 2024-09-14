@@ -110,7 +110,7 @@ type OrderStatusRequest struct {
 }
 
 type OrderStatusTrade struct {
-	Id                 int         `json:"id"`
+	Id                 string      `json:"id"`
 	Date               int64       `json:"date"`
 	Status             TradeStatus `json:"status"`
 	Price              string      `json:"price"`
