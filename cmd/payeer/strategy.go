@@ -155,7 +155,7 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 			continue
 		}
 		time.Sleep(500 * time.Millisecond)
-		orders := s.fetchPayeerOrders(pair)
+		orders := s.fetchOrders(pair)
 		ok, price := s.selector.SelectPrice(action, &orders)
 		if ok {
 			if action == payeer.ACTION_BUY {
@@ -188,7 +188,7 @@ func (s *ValueOffsetStrategy) PlaceOrderLoop(action payeer.Action, pair payeer.P
 				slog.Warn("[ValueOffsetStrategy] no binance ticker found", "symbol", s.options.Pairs[pair])
 				continue
 			}
-			rsp := s.placeOrder(action, s.options.Amount.String(), price.String())
+			rsp := s.placeOrder(action, pair, s.options.Amount.String(), price.String())
 			var binancePrice decimal.Decimal
 			if action == payeer.ACTION_SELL {
 				binancePrice = decimal.RequireFromString(binancePrices.AskPrice)
@@ -215,7 +215,7 @@ func (s *ValueOffsetStrategy) CheckAndCancelLoop(pair payeer.Pair) {
 			continue
 		}
 		time.Sleep(500 * time.Millisecond)
-		orders := s.fetchPayeerOrders(pair)
+		orders := s.fetchOrders(pair)
 		priceChangedOrderIds := []int{}
 		// s.binancePricePlaced.Range(func(key int, data placedMetadata) bool {
 		// 	t, ok := s.times.Get(key)
@@ -328,32 +328,32 @@ func (s *ValueOffsetStrategy) resetInfo() {
 }
 
 func (s *ValueOffsetStrategy) fetchMyOrders() map[string]payeer.MyOrdersOrder {
-	orders, err := s.payeerClient.MyOrders(&payeer.MyOrdersRequest{})
+	ordersRsp, err := s.payeerClient.MyOrders(&payeer.MyOrdersRequest{})
 	if err != nil {
 		panic(err)
 	}
-	if !orders.Success {
-		slog.Error("[ValueOffsetStrategy] MyOrders response error", "error", orders.Error)
+	if !ordersRsp.Success {
+		slog.Error("[ValueOffsetStrategy] MyOrders response error", "error", ordersRsp.Error)
 		os.Exit(1)
 	}
-	return orders.Orders
+	return ordersRsp.Orders
 }
 
 func (s *ValueOffsetStrategy) fetchOrderDetails(orderId int) *payeer.OrderDetails {
-	rsp, err := s.payeerClient.OrderStatus(&payeer.OrderStatusRequest{OrderId: orderId})
+	orderStatusRsp, err := s.payeerClient.OrderStatus(&payeer.OrderStatusRequest{OrderId: orderId})
 	if err != nil {
 		panic(err)
 	}
-	if !rsp.Success {
-		slog.Error("[ValueOffsetStrategy] Order status response error", "error", rsp.Error)
+	if !orderStatusRsp.Success {
+		slog.Error("[ValueOffsetStrategy] Order status response error", "error", orderStatusRsp.Error)
 		os.Exit(1)
 	}
-	return &rsp.Order
+	return &orderStatusRsp.Order
 }
 
-func (s *ValueOffsetStrategy) placeOrder(action payeer.Action, amount string, price string) *payeer.PostOrderResponse {
+func (s *ValueOffsetStrategy) placeOrder(action payeer.Action, pair payeer.Pair, amount string, price string) *payeer.PostOrderResponse {
 	rsp, err := s.payeerClient.PlaceOrder(&payeer.PostOrderRequest{
-		Pair:   payeer.PAIR_BTCRUB,
+		Pair:   pair,
 		Type:   payeer.ORDER_TYPE_LIMIT,
 		Action: action,
 		Amount: amount,
@@ -475,7 +475,7 @@ func (s *ValueOffsetStrategy) fetchBalance() map[string]payeer.Balance {
 	return balance.Balances
 }
 
-func (s *ValueOffsetStrategy) fetchPayeerOrders(pair payeer.Pair) payeer.PairsOrderInfo {
+func (s *ValueOffsetStrategy) fetchOrders(pair payeer.Pair) payeer.PairsOrderInfo {
 	orders, err := s.payeerClient.Orders([]payeer.Pair{pair})
 	if err != nil {
 		panic(err)

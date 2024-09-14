@@ -124,6 +124,8 @@ type OrderStatusTrade struct {
 	TakerCommission    string      `json:"t_fee"`
 }
 
+type OrderDetailsTrades map[string]OrderStatusTrade
+
 type OrderDetails struct {
 	Id              int                `json:"id"`
 	Date            int64              `json:"date"`
@@ -140,7 +142,7 @@ type OrderDetails struct {
 	ValueProcessed  string             `json:"value_processed"`
 	ValueRemaining  string             `json:"value_remaining"`
 	AveragePrice    string             `json:"avg_price"`
-	Trades          []OrderStatusTrade `json:"trades"`
+	Trades          OrderDetailsTrades `json:"trades"`
 }
 
 type OrderStatusResponse struct {
