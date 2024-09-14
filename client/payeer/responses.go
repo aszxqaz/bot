@@ -118,9 +118,9 @@ type OrderStatusTrade struct {
 	Value              string      `json:"value"`
 	IsMaker            bool        `json:"is_maker"`
 	IsTaker            bool        `json:"is_taker"`
-	MakerTransactionId int         `json:"m_transaction_id"`
+	MakerTransactionId string      `json:"m_transaction_id"`
 	MakerCommission    string      `json:"m_fee"`
-	TakerTransactionId int         `json:"t_transaction_id"`
+	TakerTransactionId string      `json:"t_transaction_id"`
 	TakerCommission    string      `json:"t_fee"`
 }
 
