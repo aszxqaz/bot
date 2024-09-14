@@ -127,7 +127,7 @@ type OrderStatusTrade struct {
 type OrderDetailsTrades map[string]OrderStatusTrade
 
 type OrderDetails struct {
-	Id              int                `json:"id"`
+	Id              string             `json:"id"`
 	Date            int64              `json:"date"`
 	Pair            Pair               `json:"pair"`
 	Action          Action             `json:"action"`

@@ -2,6 +2,7 @@ package payeer
 
 import (
 	"automata/signer"
+	"encoding/json"
 	"errors"
 )
 
@@ -120,11 +121,15 @@ func (p *Client) MyOrders(req *MyOrdersRequest) (*MyOrdersResponse, error) {
 		body, _ := fastResp.Body().AsString()
 		return nil, errors.New(body)
 	}
+	respBody, err := fastResp.Body().AsBytes()
+	if err != nil {
+		return nil, err
+	}
 	var empty MyOrdersEmptyResponse
-	err = fastResp.Body().AsJSON(&empty)
+	err = json.Unmarshal(respBody, &empty)
 	if err != nil {
 		var data MyOrdersResponse
-		err = fastResp.Body().AsJSON(&data)
+		err = json.Unmarshal(respBody, &data)
 		if err != nil {
 			return nil, err
 		}

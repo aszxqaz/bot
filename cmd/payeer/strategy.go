@@ -127,11 +127,21 @@ func (s *ValueOffsetStrategy) Run() {
 func (s *ValueOffsetStrategy) OrdersUpdateLoop() {
 	for {
 		time.Sleep(time.Second * 5)
+		orderIdsToDelete := []int{}
 		s.orders.Range(func(orderId int, details payeer.OrderParams) bool {
 			order := s.fetchOrderDetails(orderId)
+			if decimal.RequireFromString(order.ValueRemaining).IsZero() {
+				orderId, _ := strconv.Atoi(order.Id)
+				orderIdsToDelete = append(orderIdsToDelete, orderId)
+			}
 			slog.Info("[ValueOffsetStrategy] order details", "order", *order)
 			return true
 		})
+		for _, id := range orderIdsToDelete {
+			s.orders.Delete(id)
+			s.times.Delete(id)
+			s.binancePricePlaced.Delete(id)
+		}
 	}
 }
 
@@ -332,6 +342,7 @@ func (s *ValueOffsetStrategy) fetchMyOrders() map[string]payeer.MyOrdersOrder {
 	if err != nil {
 		panic(err)
 	}
+	s.updateWeights(60)
 	if !ordersRsp.Success {
 		slog.Error("[ValueOffsetStrategy] MyOrders response error", "error", ordersRsp.Error)
 		os.Exit(1)
@@ -344,6 +355,7 @@ func (s *ValueOffsetStrategy) fetchOrderDetails(orderId int) *payeer.OrderDetail
 	if err != nil {
 		panic(err)
 	}
+	s.updateWeights(5)
 	if !orderStatusRsp.Success {
 		slog.Error("[ValueOffsetStrategy] Order status response error", "error", orderStatusRsp.Error)
 		os.Exit(1)
