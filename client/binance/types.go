@@ -11,6 +11,7 @@ type Symbol string
 const (
 	SYMBOL_BNBBTC  Symbol = "BNBBTC"
 	SYMBOL_BTCUSDT Symbol = "BTCUSDT"
+	SYMBOL_ETHUSDT Symbol = "ETHUSDT"
 )
 
 type Params struct {

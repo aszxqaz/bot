@@ -22,7 +22,7 @@ const (
 	PAIR_ETHRUB  Pair = "ETH_RUB"
 	PAIR_ETHEUR  Pair = "ETH_EUR"
 	PAIR_ETHBTC  Pair = "ETH_BTC"
-	// "ETH_USDT"
+	PAIR_ETHUSDT Pair = "ETH_USDT"
 	// "BCH_USD"
 	// "BCH_RUB"
 	// "BCH_EUR"
