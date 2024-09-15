@@ -48,32 +48,51 @@ func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) 
 		action:         action,
 		binanceTickers: ps.binanceTickers,
 	}
-	return ps.pipe(
+
+	ok, price := ps.pipe(
 		pctx,
 		ps.selectByValueOffset,
 		ps.selectByElevation,
-		// ps.filterByWmaRatio,
 		ps.filterByBinancePrice,
 	)
+
+	if ok {
+		return ok, price
+	} else {
+		binanceTickersData, ok := pctx.binanceTickers.Get(ps.Config.Symbol)
+		if !ok {
+			slog.Error("[PayeerPriceSelector] binance price not found", "symbol", ps.Config.Symbol)
+			return false, price
+		}
+
+		var binancePrice decimal.Decimal
+		if pctx.action == ACTION_BUY {
+			binancePrice = decimal.RequireFromString(binanceTickersData.BidPrice)
+		} else {
+			binancePrice = decimal.RequireFromString(binanceTickersData.AskPrice)
+		}
+		return ps.selectByElevation(pctx, binancePrice)
+	}
 }
 
 func (ps *PayeerPriceSelector) filterByBinancePrice(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
-	binancePrice, ok := pctx.binanceTickers.Get(ps.Config.Symbol)
+	binanceTickersData, ok := pctx.binanceTickers.Get(ps.Config.Symbol)
 	if !ok {
 		slog.Error("[PayeerPriceSelector] binance price not found", "symbol", ps.Config.Symbol)
 		return false, prevPrice
 	}
+
+	var binancePrice decimal.Decimal
 	if pctx.action == ACTION_BUY {
-		binPrice := decimal.RequireFromString(binancePrice.BidPrice)
-		ok := prevPrice.Div(binPrice).LessThan(ps.Config.BidMaxBinancePriceRatio)
-		slog.Info("[PayeerPriceSelector] filter by binance price", "action", pctx.action, "ok", ok, "binance bid price", binPrice.String(), "price", prevPrice.String())
-		return ok, prevPrice
+		binancePrice = decimal.RequireFromString(binanceTickersData.BidPrice)
+		ok = prevPrice.Div(binancePrice).LessThan(ps.Config.BidMaxBinancePriceRatio)
 	} else {
-		binPrice := decimal.RequireFromString(binancePrice.AskPrice)
-		ok := prevPrice.Div(binPrice).GreaterThan(ps.Config.AskMinBinancePriceRatio)
-		slog.Info("[PayeerPriceSelector] filter by binance price", "action", pctx.action, "ok", ok, "binance ask price", binPrice.String(), "price", prevPrice.String())
-		return ok, prevPrice
+		binancePrice = decimal.RequireFromString(binanceTickersData.AskPrice)
+		ok = prevPrice.Div(binancePrice).GreaterThan(ps.Config.AskMinBinancePriceRatio)
 	}
+
+	slog.Info("[PayeerPriceSelector] filter by binance price", "action", pctx.action, "ok", ok, "binance price", binancePrice.String(), "price", prevPrice.String())
+	return ok, prevPrice
 }
 
 func (ps *PayeerPriceSelector) filterByWmaRatio(pctx *PayeerPriceSelectorContext, prevPrice decimal.Decimal) (bool, decimal.Decimal) {
