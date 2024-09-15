@@ -65,13 +65,40 @@ func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) 
 			return false, price
 		}
 
-		var binancePrice decimal.Decimal
 		if pctx.action == ACTION_BUY {
-			binancePrice = decimal.RequireFromString(binanceTickersData.BidPrice).Mul(ps.Config.BidMaxBinancePriceRatio)
+			price = decimal.RequireFromString(binanceTickersData.BidPrice).Mul(ps.Config.BidMaxBinancePriceRatio)
 		} else {
-			binancePrice = decimal.RequireFromString(binanceTickersData.AskPrice).Mul(ps.Config.AskMinBinancePriceRatio)
+			price = decimal.RequireFromString(binanceTickersData.AskPrice).Mul(ps.Config.AskMinBinancePriceRatio)
 		}
-		return ps.selectByElevation(pctx, binancePrice)
+
+		orders := ps.resolveOrders(pctx)
+
+		var priceFound func(orderPrice decimal.Decimal) bool
+		var elevate func(orderPrice decimal.Decimal) decimal.Decimal
+
+		if pctx.action == ACTION_BUY {
+			priceFound = func(orderPrice decimal.Decimal) bool { return orderPrice.LessThan(price) }
+			elevate = func(orderPrice decimal.Decimal) decimal.Decimal { return orderPrice.Add(cent) }
+		} else {
+			priceFound = func(orderPrice decimal.Decimal) bool { return orderPrice.GreaterThan(price) }
+			elevate = func(orderPrice decimal.Decimal) decimal.Decimal { return orderPrice.Sub(cent) }
+		}
+
+		for i, order := range orders {
+			orderPrice := decimal.RequireFromString(order.Price)
+			if priceFound(orderPrice) {
+				price = elevate(orderPrice)
+				for j := i - 1; j >= 0; j-- {
+					topPrice := decimal.RequireFromString(orders[j].Price)
+					if topPrice.Equal(price) {
+						price = elevate(price)
+					} else {
+						break
+					}
+				}
+			}
+		}
+		return true, price
 	}
 }
 

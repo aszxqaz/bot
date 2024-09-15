@@ -14,7 +14,7 @@ func main() {
 	client := createClient()
 	orders := fetchOrders(client)
 
-	fmt.Println(orders)
+	fmt.Printf("%+v", orders)
 
 	// fmt.Println("Bids")
 	// printOrders(orders.Bids)
