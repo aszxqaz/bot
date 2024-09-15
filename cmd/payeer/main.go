@@ -23,7 +23,7 @@ func main() {
 
 	strategy := NewVolumeOffsetStrategy(payeerClient, binanceClient, &ValueOffsetStrategyOptions{
 		Pairs: map[payeer.Pair]binance.Symbol{
-			payeer.PAIR_BTCUSDT: binance.SYMBOL_BTCUSDT,
+			payeer.PAIR_ETHUSDT: binance.SYMBOL_ETHUSDT,
 		},
 		BinanceTickerInterval: time.Millisecond * 100,
 		MaxPriceRatio:         "1.001",
@@ -36,13 +36,13 @@ func main() {
 			WmaTakeAmount:          decimal.RequireFromString(".025"),
 			WmaTake:                0,
 
-			Symbol:                  binance.SYMBOL_BTCUSDT,
+			Symbol:                  binance.SYMBOL_ETHUSDT,
 			BidMaxBinancePriceRatio: decimal.RequireFromString(".999"),
-			AskMinBinancePriceRatio: decimal.RequireFromString("1.001"),
+			AskMinBinancePriceRatio: decimal.RequireFromString("1.08"),
 		},
-		BuyEnabled:  true,
+		BuyEnabled:  false,
 		SellEnabled: true,
-		Amount:      decimal.RequireFromString("0.0001"),
+		Amount:      decimal.RequireFromString("0.001"),
 	})
 	strategy.Run()
 }
