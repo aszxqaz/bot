@@ -65,11 +65,19 @@ func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) 
 			return false, price
 		}
 
+		var binancePrice decimal.Decimal
+		var ratio decimal.Decimal
 		if pctx.action == ACTION_BUY {
-			price = decimal.RequireFromString(binanceTickersData.BidPrice).Mul(ps.Config.BidMaxBinancePriceRatio)
+			binancePrice = decimal.RequireFromString(binanceTickersData.BidPrice)
+			ratio = ps.Config.BidMaxBinancePriceRatio
 		} else {
-			price = decimal.RequireFromString(binanceTickersData.AskPrice).Mul(ps.Config.AskMinBinancePriceRatio)
+			binancePrice = decimal.RequireFromString(binanceTickersData.AskPrice)
+			ratio = ps.Config.AskMinBinancePriceRatio
 		}
+
+		price = binancePrice.Mul(ratio)
+
+		slog.Info("[PayeerPriceSelector] binance price multiplied", "action", action, "original", binancePrice.String(), "ratio", ratio.String(), "multiplied", price.String())
 
 		orders := ps.resolveOrders(pctx)
 
