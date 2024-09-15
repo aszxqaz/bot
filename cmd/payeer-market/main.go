@@ -27,10 +27,10 @@ func main() {
 		},
 		BinanceTickerInterval: time.Millisecond * 20,
 		TradeLoopInterval:     time.Second * 10,
-		BidMinRatio:           decimal.RequireFromString("999"),
-		AskMaxRatio:           decimal.RequireFromString("1.01"),
-		MaxBuyAmount:          decimal.Zero,
-		QuoteMult:             decimal.RequireFromString("1.0"),
+		BidMinRatio:           decimal.RequireFromString("0"),
+		AskMaxRatio:           decimal.RequireFromString("999"),
+		MaxBuyAmount:          decimal.Zero,                     // 0.0 = no effect
+		QuoteMult:             decimal.RequireFromString("1.0"), // 1.0 = no effect
 	})
 
 	trader.Start()

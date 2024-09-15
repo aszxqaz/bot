@@ -63,7 +63,7 @@ func (s *PayeerMarketTrader) Start() {
 		go s.tradeLoop(pair, payeer.ACTION_BUY)
 		go s.tradeLoop(pair, payeer.ACTION_SELL)
 	}
-	select {}
+	select {} // endless block of the process
 }
 
 func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
@@ -76,8 +76,9 @@ func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
 			slog.Error("[PayeerMarketTrader] No binance ticker cached for", "symbol", s.options.Pairs[pair])
 			continue
 		}
+
 		// Getting cached payeer orders data for the pair
-		asksData, ok := s.orders.Get(pair)
+		ordersData, ok := s.orders.Get(pair)
 		if !ok {
 			slog.Error("[PayeerMarketTrader] No orders cached for", "pair", pair)
 			continue
@@ -87,14 +88,13 @@ func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
 		var orders []payeer.OrdersOrder
 		var doesPriceSatisfy func(price decimal.Decimal) bool
 		if action == payeer.ACTION_BUY {
-			orders = asksData.Asks
+			orders = ordersData.Asks
 			binanceAskPrice := decimal.RequireFromString(binanceTickersData.AskPrice)
 			doesPriceSatisfy = func(price decimal.Decimal) bool {
 				return price.Div(binanceAskPrice).LessThan(s.options.AskMaxRatio)
 			}
-		}
-		if action == payeer.ACTION_SELL {
-			orders = asksData.Bids
+		} else {
+			orders = ordersData.Bids
 			binanceBidPrice := decimal.RequireFromString(binanceTickersData.BidPrice)
 			doesPriceSatisfy = func(price decimal.Decimal) bool {
 				return price.Div(binanceBidPrice).GreaterThan(s.options.BidMinRatio)
@@ -121,11 +121,13 @@ func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
 		// Resolving the amount of an order to be placed based on the total amount, balance and configuration
 		var orderAmount decimal.Decimal
 		if action == payeer.ACTION_BUY {
+			// Getting cached balance for the quote
 			quoteBalance, ok := s.balance.Get(pair.Quote())
 			if !ok {
 				slog.Info("[PayerrMarketTrader] Zero quote balance for", "quote", pair.Quote())
 				continue
 			}
+
 			// Resolving orderAmount based on the quote balance
 			quoteBalanceAvailable := decimal.NewFromFloat(quoteBalance.Available)
 			orderAmount = decimal.Zero
@@ -133,6 +135,7 @@ func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
 				value := decimal.RequireFromString(order.Value)
 				price := decimal.RequireFromString(order.Price)
 				orderQuote := decimal.Min(quoteBalanceAvailable, value)
+				// The amount from the order is adjusted by multiplying the order price by QuoteMult
 				orderAmount = orderAmount.Add(orderQuote.Div(price.Mul(s.options.QuoteMult)))
 				quoteBalanceAvailable = quoteBalanceAvailable.Sub(orderQuote)
 				if quoteBalanceAvailable.IsZero() {
@@ -145,17 +148,21 @@ func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
 			orderAmount = orderAmount.RoundFloor(precision)
 
 			slog.Info("[PayeerMarketTrader] Order amount calculated", "pair", pair, "action", action, "orderAmount", orderAmount.String(), "quoteBalance", quoteBalance.Available)
+
+			// Restricting the order amount if MaxBuyAmount is positivie
 			if s.options.MaxBuyAmount.IsPositive() {
 				orderAmount = decimal.Min(orderAmount, s.options.MaxBuyAmount)
 				slog.Info("[PayeerMarketTrader] Order amount restricted", "orderAmount", orderAmount, "maxBuyAmount", s.options.MaxBuyAmount.String())
 			}
 		} else {
-			// Resolving orderAmount based on the base balance
+			// Getting cached balance for the base
 			baseBalance, ok := s.balance.Get(pair.Base())
 			if !ok {
 				slog.Info("[PayerrMarketTrader] Zero base balance for", "base", pair.Base())
 				continue
 			}
+
+			// Resolving orderAmount based on the base balance
 			baseBalanceAvailable := decimal.NewFromFloat(baseBalance.Available)
 			orderAmount = decimal.Min(totalAmount, baseBalanceAvailable)
 		}
@@ -175,31 +182,21 @@ func (s *PayeerMarketTrader) tradeLoop(pair payeer.Pair, action payeer.Action) {
 	}
 }
 
-// func (s *PayeerMarketTrader) placeMarketOrder(action payeer.Action, pair payeer.Pair, amount string) *payeer.PostOrderResponse {
-// 	rsp, err := s.payeerClient.PlaceOrder(&payeer.PostOrderRequest{
-// 		Pair:   pair,
-// 		Type:   payeer.ORDER_TYPE_MARKET,
-// 		Action: action,
-// 		Amount: amount,
-// 	})
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	s.updateWeights(10)
-// 	if !rsp.Success {
-// 		slog.Error("[PayeerMarketTrader] Place order response error", "response", rsp)
-// 		os.Exit(1)
-// 	}
-// 	slog.Info("[PayeerMarketTrader] Order placed:", "order", rsp)
-// 	return rsp
-// }
-
 func (s *PayeerMarketTrader) fetchOrdersLoop() {
 	pairs := s.getPairs()
 	for {
 		orders := s.fetchOrders(pairs)
 		for p, o := range orders.Pairs {
 			s.orders.Set(p, o)
+		}
+	}
+}
+
+func (s *PayeerMarketTrader) fetchAndUpdateBalance() {
+	for asset, balance := range s.fetchBalance() {
+		if balance.Available > 0 {
+			s.balance.Set(asset, balance)
+			slog.Info("[PayeerMarketTrader] Balance update:", "asset", asset, "balance", balance)
 		}
 	}
 }
@@ -216,12 +213,25 @@ func (s *PayeerMarketTrader) resetInfo() {
 	s.info = info
 }
 
-func (s *PayeerMarketTrader) fetchAndUpdateBalance() {
-	for asset, balance := range s.fetchBalance() {
-		if balance.Available > 0 {
-			s.balance.Set(asset, balance)
-			slog.Info("[PayeerMarketTrader] Balance update:", "asset", asset, "balance", balance)
+func (s *PayeerMarketTrader) placeMarketOrder(action payeer.Action, pair payeer.Pair, amount string) *payeer.PostOrderResponse {
+	for {
+		rsp, err := s.payeerClient.PlaceOrder(&payeer.PostOrderRequest{
+			Pair:   pair,
+			Type:   payeer.ORDER_TYPE_MARKET,
+			Action: action,
+			Amount: amount,
+		})
+		if err != nil {
+			slog.Error("[PayeerMarketTrader] HTTP error occured. Retrying...", "error", err)
+			continue
 		}
+		s.updateWeights(10)
+		if !rsp.Success {
+			slog.Error("[PayeerMarketTrader] Place order response error", "response", rsp)
+			os.Exit(1)
+		}
+		slog.Info("[PayeerMarketTrader] Order placed:", "order", rsp)
+		return rsp
 	}
 }
 
