@@ -96,6 +96,7 @@ func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) 
 						break
 					}
 				}
+				break
 			}
 		}
 		return true, price
