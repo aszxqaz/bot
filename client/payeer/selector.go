@@ -67,9 +67,9 @@ func (ps *PayeerPriceSelector) SelectPrice(action Action, info *PairsOrderInfo) 
 
 		var binancePrice decimal.Decimal
 		if pctx.action == ACTION_BUY {
-			binancePrice = decimal.RequireFromString(binanceTickersData.BidPrice)
+			binancePrice = decimal.RequireFromString(binanceTickersData.BidPrice).Mul(ps.Config.BidMaxBinancePriceRatio)
 		} else {
-			binancePrice = decimal.RequireFromString(binanceTickersData.AskPrice)
+			binancePrice = decimal.RequireFromString(binanceTickersData.AskPrice).Mul(ps.Config.AskMinBinancePriceRatio)
 		}
 		return ps.selectByElevation(pctx, binancePrice)
 	}
