@@ -41,30 +41,36 @@ func (s *Fetcher) Info() *payeer.InfoResponse {
 }
 
 func (s *Fetcher) MyOrders() map[string]payeer.MyOrdersOrder {
-	ordersRsp, err := s.payeerClient.MyOrders(&payeer.MyOrdersRequest{})
-	if err != nil {
-		panic(err)
-	}
+	for {
+		ordersRsp, err := s.payeerClient.MyOrders(&payeer.MyOrdersRequest{})
+		if err != nil {
+			slog.Error("[PayeerFetcher] MyOrders HTTP error. Retrying...", "error", err)
+			continue
+		}
 
-	s.updateWeights(60)
-	if !ordersRsp.Success {
-		slog.Error("[PayeerFetcher] MyOrders response error", "error", ordersRsp.Error)
-		os.Exit(1)
+		s.updateWeights(60)
+		if !ordersRsp.Success {
+			slog.Error("[PayeerFetcher] MyOrders response error", "error", ordersRsp.Error)
+			os.Exit(1)
+		}
+		return ordersRsp.Orders
 	}
-	return ordersRsp.Orders
 }
 
 func (s *Fetcher) OrderDetails(orderId int) *payeer.OrderDetails {
-	orderStatusRsp, err := s.payeerClient.OrderStatus(&payeer.OrderStatusRequest{OrderId: orderId})
-	if err != nil {
-		panic(err)
+	for {
+		orderStatusRsp, err := s.payeerClient.OrderStatus(&payeer.OrderStatusRequest{OrderId: orderId})
+		if err != nil {
+			slog.Error("[PayeerFetcher] Order details HTTP error. Retrying...", "error", err)
+			continue
+		}
+		s.updateWeights(5)
+		if !orderStatusRsp.Success {
+			slog.Error("[PayeerFetcher] Order status response error", "error", orderStatusRsp.Error)
+			os.Exit(1)
+		}
+		return &orderStatusRsp.Order
 	}
-	s.updateWeights(5)
-	if !orderStatusRsp.Success {
-		slog.Error("[PayeerFetcher] Order status response error", "error", orderStatusRsp.Error)
-		os.Exit(1)
-	}
-	return &orderStatusRsp.Order
 }
 
 func (s *Fetcher) PlaceOrder(action payeer.Action, pair payeer.Pair, amount string, price string) *payeer.PostOrderResponse {
@@ -169,6 +175,7 @@ func (s *Fetcher) updateWeights(count int) {
 		})
 	}
 	if s.curWPoints.Get()/POINTS_LOG_OFFSET != s.lastWPoints.Get()/POINTS_LOG_OFFSET || s.curWPoints.Get() < 100 {
+		s.lastWPoints.Set(s.curWPoints.Get())
 		slog.Info("[PayeerFetcher] Weights info", "remaining/min", s.curWPoints.Get())
 	}
 }

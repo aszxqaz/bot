@@ -45,7 +45,13 @@ func (s *PayeerSharesStrategy) runShareLoop(share *PayeerSharesStrategyShare) {
 					Time:    time.Now(),
 				})
 				time.Sleep(s.options.RefetchBalanceDelay)
-				s.initBalance()
+				s.updateBalanceByOrderParams(share, &order.Params, true)
+			} else if !order.Success {
+				if order.Error.Code == payeer.ERR_INSUFFICIENT_FUNDS ||
+					order.Error.Code == payeer.ERR_INSUFFICIENT_VOLUME {
+					s.initBalance()
+					continue
+				}
 			}
 		} else {
 			diff := time.Since(orderCached.Time)
@@ -57,6 +63,7 @@ func (s *PayeerSharesStrategy) runShareLoop(share *PayeerSharesStrategyShare) {
 			orderFetched := s.fetcher.OrderDetails(orderCached.OrderId)
 			if decimal.RequireFromString(orderFetched.ValueRemaining).IsZero() {
 				s.store.shareOrders.Delete(share.ID)
+				s.updateBalanceByOrderDetails(share, orderFetched)
 				continue
 			}
 
@@ -65,8 +72,8 @@ func (s *PayeerSharesStrategy) runShareLoop(share *PayeerSharesStrategyShare) {
 				rsp := s.fetcher.CancelOrder(orderCached.OrderId)
 				if rsp.Success {
 					s.store.shareOrders.Delete(share.ID)
-					time.Sleep(s.options.RefetchBalanceDelay)
-					s.initBalance()
+					orderRefetched := s.fetcher.OrderDetails(orderCached.OrderId)
+					s.updateBalanceByOrderDetails(share, orderRefetched)
 				} else {
 					slog.Error("[Share "+share.ID+"] Cancelling order failed.", "error", rsp.Error)
 					continue
@@ -74,6 +81,47 @@ func (s *PayeerSharesStrategy) runShareLoop(share *PayeerSharesStrategyShare) {
 			}
 		}
 	}
+}
+
+func (s *PayeerSharesStrategy) updateBalanceByOrderParams(share *PayeerSharesStrategyShare, order *payeer.OrderParams, in bool) {
+	slog.Info("[Share "+share.ID+"] Updating balance by order params", "order", order)
+	mul := 1.0
+	if !in {
+		mul = -1.0
+	}
+	if share.Action == payeer.ACTION_SELL {
+		base, _ := s.store.balance.Get(share.Pair.Base())
+		amount := decimal.RequireFromString(order.Amount).InexactFloat64()
+		base.Available -= amount * mul
+		base.Hold += amount * mul
+		s.store.balance.Set(share.Pair.Base(), base)
+	} else {
+		quote, _ := s.store.balance.Get(share.Pair.Quote())
+		value := decimal.RequireFromString(order.Value).InexactFloat64()
+		quote.Available -= value * mul
+		quote.Hold += value * mul
+		s.store.balance.Set(share.Pair.Quote(), quote)
+	}
+}
+
+func (s *PayeerSharesStrategy) updateBalanceByOrderDetails(share *PayeerSharesStrategyShare, order *payeer.OrderDetails) {
+	slog.Info("[Share "+share.ID+"] Updating balance by order details...", "order", order)
+	for _, trade := range order.Trades {
+		base, _ := s.store.balance.Get(share.Pair.Base())
+		quote, _ := s.store.balance.Get(share.Pair.Quote())
+		mul := decimal.NewFromInt(1)
+		if share.Action == payeer.ACTION_SELL {
+			mul = decimal.NewFromInt(-1)
+		}
+		base.Available += decimal.RequireFromString(trade.Amount).Mul(mul).InexactFloat64()
+		quote.Available -= decimal.RequireFromString(trade.Value).Mul(mul).InexactFloat64()
+		s.store.balance.Set(share.Pair.Base(), base)
+		s.store.balance.Set(share.Pair.Quote(), quote)
+	}
+	s.updateBalanceByOrderParams(share, &payeer.OrderParams{
+		Amount: order.AmountRemaining,
+		Value:  order.ValueRemaining,
+	}, false)
 }
 
 func (s *PayeerSharesStrategy) hasPriceChanged(share *PayeerSharesStrategyShare, order *ShareOrderInfo) bool {
@@ -168,7 +216,9 @@ func (s *PayeerSharesStrategy) tryPlaceOrder(share *PayeerSharesStrategyShare) *
 func (s *PayeerSharesStrategy) runOrdersFetchLoop() {
 	pairs := make([]payeer.Pair, 0, len(s.options.Shares))
 	for _, share := range s.options.Shares {
-		pairs = append(pairs, share.Pair)
+		if !slices.Contains(pairs, share.Pair) {
+			pairs = append(pairs, share.Pair)
+		}
 	}
 	init := true
 	for {
